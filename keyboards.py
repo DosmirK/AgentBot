@@ -16,6 +16,7 @@ BTN_SELLER = "🏪 Продавец"
 BTN_ADD_PRODUCT = "➕ Добавить товар"
 BTN_MY_PRODUCTS = "📦 Мои товары"
 BTN_DELETE_PRODUCT = "🗑 Удалить товар"
+BTN_EDIT_PRODUCT = "✏️ Изменить товар"
 BTN_ORDERS = "📥 Заказы"
 
 BTN_SHOPS = "📋 Список магазинов"
@@ -66,6 +67,7 @@ def seller_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_ADD_PRODUCT)],
             [KeyboardButton(text=BTN_MY_PRODUCTS)],
             [KeyboardButton(text=BTN_DELETE_PRODUCT)],
+            [KeyboardButton(text=BTN_EDIT_PRODUCT)],
             [KeyboardButton(text=BTN_ORDERS)]
         ],
         resize_keyboard=True,
@@ -139,6 +141,70 @@ def products_kb(products) -> InlineKeyboardMarkup:
                 callback_data=f"product_{product_id}"
             )
         ])
+
+    return kb
+
+
+def search_products_kb(products) -> InlineKeyboardMarkup:
+    """
+    products = [(id, name, amount, price), ...]
+    Для результатов поиска
+    """
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+
+    for product in _safe_iter(products):
+
+        if len(product) < 4:
+            continue
+
+        product_id = product[0]
+        name = _safe_str(product[2])
+        amount = _safe_str(product[3])
+        price = _safe_str(product[4])
+
+        text = f"{name} | 📦 {amount} | 💰 {price} сом"
+
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=text,
+                callback_data=f"product_{product_id}"
+            )
+        ])
+
+    return kb
+
+
+def edit_products_kb(products):
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+
+    for p in products:
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"{p[1]} | {p[2]} | {p[3]} сом",
+                callback_data=f"editprod_{p[0]}"
+            )
+        ])
+
+    return kb
+
+
+def edit_fields_kb():
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📝 Название", callback_data="edit_name"),
+            InlineKeyboardButton(text="📦 Фасовка", callback_data="edit_amount")
+        ],
+        [
+            InlineKeyboardButton(text="💰 Цена", callback_data="edit_price"),
+            InlineKeyboardButton(text="📊 Остаток", callback_data="edit_stock")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Отмена", callback_data="edit_cancel")
+        ]
+    ])
 
     return kb
 

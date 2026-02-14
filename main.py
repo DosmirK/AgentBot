@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from config import ADMIN_ID, TOKEN
 from db import *
 from keyboards import *
-from states import SellerRegister, AddProduct, OrderState, DeclineState 
+from states import SellerRegister, AddProduct, OrderState, DeclineState, BuyerState, EditProduct
 
 # ---------------- ЛОГИ ----------------
 logging.basicConfig(
@@ -76,6 +76,58 @@ async def ban_seller(message: Message):
     except:
         pass
 
+
+@dp.message(Command("sellers"))
+async def admin_sellers(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    sellers = get_all_sellers()   # функция из db
+
+    if not sellers:
+        await message.answer("❌ Продавцов нет")
+        return
+
+    text = "🏪 Продавцы:\n\n"
+
+    for s in sellers:
+        sid = s[0]
+        tg_id = s[1]
+        name = s[2]
+        active = "✅" if s[3] == 1 else "⛔"
+
+        text += (
+            f"{active} {name}\n"
+            f"ID: {tg_id}\n\n"
+        )
+
+    await message.answer(text)
+
+
+@dp.message(Command("buyers"))
+async def admin_buyers(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    buyers = get_all_buyers()
+
+    if not buyers:
+        await message.answer("❌ Покупателей нет")
+        return
+
+    text = "🛒 Покупатели:\n\n"
+
+    for b in buyers:
+        uid = b[0]
+        name = b[1] if len(b) > 1 else "—"
+
+        text += f"👤 {name}\n🆔 {uid}\n\n"
+
+    await message.answer(text)
+
+
 # ---------------- START ----------------
 @dp.message(Command("start"))
 async def start(message: Message, state: FSMContext):
@@ -96,21 +148,43 @@ async def show_shops(message: Message):
     await message.answer("🏪 Выберите магазин:", reply_markup=shops_kb(shops))
 
 @dp.callback_query(F.data.startswith("shop_"))
-async def choose_shop(call: CallbackQuery):
+async def choose_shop(call: CallbackQuery, state: FSMContext):
+
+    logging.info(f"[SHOP] Callback data: {call.data}")
+
     try:
-        shop_id = int(call.data.split("_")[1])
-    except:
+        seller_id = int(call.data.split("_")[1])
+    except Exception as e:
+        logging.error(f"[SHOP] Parse error: {e}")
         await call.answer("Ошибка")
         return
 
-    products = get_products_by_shop(shop_id)
+    logging.info(f"[SHOP] Selected seller_id = {seller_id}")
+
+    products = get_products(seller_id)
+
+    logging.info(f"[SHOP] Products count = {len(products)}")
+
     if not products:
         await call.message.answer("❌ Нет товаров")
         await call.answer()
         return
 
-    await call.message.answer("📦 Выберите товар:", reply_markup=products_kb(products))
+    # Сохраняем seller_id
+    await state.update_data(seller_id=seller_id)
+
+    data = await state.get_data()
+    logging.info(f"[SHOP] FSM data after save: {data}")
+
+    await state.set_state(BuyerState.search)
+
+    await call.message.answer(
+        "📦 Выберите товар или напишите название:",
+        reply_markup=products_kb(products)
+    )
+
     await call.answer()
+
 
 @dp.callback_query(F.data.startswith("product_"))
 async def choose_product(call: CallbackQuery, state: FSMContext):
@@ -121,25 +195,95 @@ async def choose_product(call: CallbackQuery, state: FSMContext):
         return
 
     await state.update_data(product_id=product_id)
+    await state.update_data(shop_id=None)
     await call.message.answer("Введите количество:")
     await state.set_state(OrderState.amount)
     await call.answer()
 
+@dp.message(BuyerState.search)
+async def search_or_choose_product(message: Message, state: FSMContext):
+
+    logging.info(f"[SEARCH] Message: {message.text}")
+
+    data = await state.get_data()
+    logging.info(f"[SEARCH] FSM data: {data}")
+
+    shop_id = data.get("seller_id")
+
+    if not shop_id:
+        logging.warning("[SEARCH] seller_id not found in FSM")
+        await message.answer("Сначала выберите магазин 👇")
+        await state.clear()
+        return
+
+    logging.info(f"[SEARCH] Using seller_id = {shop_id}")
+
+    query = message.text.strip()
+
+    if not query:
+        logging.warning("[SEARCH] Empty query")
+        await message.answer("Введите название товара")
+        return
+
+    logging.info(f"[SEARCH] Query = '{query}'")
+
+    matched_products = search_products_by_name(shop_id, query)
+
+    logging.info(f"[SEARCH] Found products: {matched_products}")
+
+    if not matched_products:
+        logging.warning("[SEARCH] No products found")
+        await message.answer("❌ Товар не найден. Попробуйте другое название:")
+        return
+
+    await message.answer(
+        "Найдены совпадения:",
+        reply_markup=search_products_kb(matched_products)
+    )
+
+
 # ---------------- ЗАКАЗ ----------------
 @dp.message(OrderState.amount)
 async def order_amount(message: Message, state: FSMContext):
+
     text = message.text.replace(",", ".")
+
     try:
         amount = float(text)
     except:
         await message.answer("Введите число")
         return
+
     if amount <= 0:
         await message.answer("Количество должно быть больше 0")
         return
+
+    data = await state.get_data()
+    product_id = data["product_id"]
+
+    product = get_product(product_id)
+
+    if not product:
+        await message.answer("❌ Товар не найден")
+        await state.clear()
+        return
+
+    stock = product[5]   # ← ВАЖНО: индекс склада (если не так — скажи)
+
+    # Проверка остатков
+    if amount > stock:
+        await message.answer(
+            f"❌ В наличии только {stock} шт.\n"
+            f"Введите другое количество:"
+        )
+        return
+
+    # Всё ок
     await state.update_data(amount=amount)
+
     await message.answer("Введите адрес:")
     await state.set_state(OrderState.address)
+
 
 @dp.message(OrderState.address)
 async def order_address(message: Message, state: FSMContext):
@@ -181,11 +325,24 @@ async def confirm_order(call: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
+    amount = int(data["amount"])
+    decrease_stock(product[0], amount)
+
+    # Проверяем остаток после уменьшения
+    product_after = get_product(product[0])
+    if product_after[5] <= 5:  # предполагается, что индекс 5 — это stock
+        seller = get_seller_by_id(product_after[1])
+        if seller:
+            await bot.send_message(
+                seller[1],
+                f"⚠️ Остаток товара '{product_after[2]}' низкий: {product_after[5]} шт."
+            )
+
     order_id = create_order(
         call.from_user.id,
         product[1],
         product[0],
-        data["amount"],
+        amount,
         data["address"]
     )
 
@@ -197,22 +354,35 @@ async def confirm_order(call: CallbackQuery, state: FSMContext):
     seller_name = seller[2] if seller else "Неизвестно"
 
     if seller:
-        total = float(product[4]) * data["amount"]
+        total = float(product[4]) * amount
         text = f""" 
 📥 Новый заказ #{order_id} 
 🏪 Магазин: {seller_name} 
 📦 Товар: {product[2]} 
 📊 фасовка: {product[3]} 
-🔢 Кол-во: {int(data['amount'])}
+🔢 Кол-во: {amount}
 📍 Адрес доставки: {data['address']} 
 💰 Цена: {product[4]} сом 
 💵 Итого: {total} сом 
 👤 Покупатель: {call.from_user.full_name} """
         await bot.send_message(seller[1], text, reply_markup=order_confirm_kb(order_id))
 
+        admin_text = (
+            f"📊 Новый заказ (копия)\n\n"
+            f"🆔 #{order_id}\n"
+            f"🏪 {seller_name}\n"
+            f"📦 {product[2]}\n"
+            f"🔢 {amount}\n"
+            f"💵 {total} сом\n"
+            f"👤 Покупатель: {call.from_user.full_name}\n"
+            f"🆔 ID: {call.from_user.id}"
+        )
+        await bot.send_message(ADMIN_ID, admin_text)
+
     await call.message.answer(f"✅ Заказ #{order_id} отправлен")
     await state.clear()
     await call.answer()
+
 
 @dp.callback_query(F.data == "buyer_confirm_no", OrderState.confirm)
 async def cancel_order(call: CallbackQuery, state: FSMContext):
@@ -229,7 +399,18 @@ async def seller_start(message: Message, state: FSMContext):
     if not seller:
         add_seller(message.from_user.id)
         await message.answer("🔒 Доступ платный")
-        await bot.send_message(ADMIN_ID, f"Запрос: {message.from_user.id}")
+        user = message.from_user
+        username = f"@{user.username}" if user.username else "без username"
+        full_name = user.full_name
+
+        text = (
+            "📩 Запрос на доступ продавца\n\n"
+            f"👤 Имя: {full_name}\n"
+            f"🔗 Username: {username}\n"
+            f"🆔 ID: {user.id}"
+        )
+
+        await bot.send_message(ADMIN_ID, text)
         return
 
     if seller[3] == 0:
@@ -257,6 +438,11 @@ async def save_shop(message: Message, state: FSMContext):
 @dp.message(F.text == "➕ Добавить товар")
 @seller_only
 async def add_product_start(message: Message, state: FSMContext):
+
+    seller = get_seller(message.from_user.id)
+
+    await state.update_data(seller_id=seller[0])
+
     await message.answer("Название товара:")
     await state.set_state(AddProduct.name)
 
@@ -276,29 +462,74 @@ async def product_amount(message: Message, state: FSMContext):
 
 @dp.message(AddProduct.price)
 @seller_only
-async def product_price(message: Message, state: FSMContext):
+async def get_price(message: Message, state: FSMContext):
+
     try:
         price = float(message.text.replace(",", "."))
     except:
-        await message.answer("Введите число")
+        await message.answer("Введите число (например: 150 или 150.5)")
         return
+
+    if price <= 0:
+        await message.answer("Цена должна быть больше 0")
+        return
+
+    await state.update_data(price=price)
+
+    await message.answer("Введите количество на складе:")
+    await state.set_state(AddProduct.stock)
+
+@dp.message(AddProduct.stock)
+@seller_only
+async def get_stock(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Введите число!")
+        return
+
+    stock = int(message.text)
+
     data = await state.get_data()
-    seller = get_seller(message.from_user.id)
-    add_product(seller[0], data["name"], data["amount"], price)
-    await message.answer("✅ Добавлено", reply_markup=seller_menu())
+
+    add_product(
+        seller_id=data["seller_id"],
+        name=data["name"],
+        amount=data["amount"],
+        price=data["price"],
+        stock=stock
+    )
+
     await state.clear()
+
+    await message.answer("✅ Товар добавлен")
 
 @dp.message(F.text == "📦 Мои товары")
 @seller_only
 async def my_products(message: Message, state: FSMContext):
+
     seller = get_seller(message.from_user.id)
     products = get_products(seller[0])
+
     if not products:
         await message.answer("Нет товаров")
         return
+
     text = "📦 Ваши товары:\n\n"
+
     for p in products:
-        text += f"{p[0]}# | {p[1]} | {p[2]} | {p[3]} сом\n"
+        pid = p[0]
+        name = p[1]
+        pack = p[2]
+        price = p[3]
+        stock = p[4]
+
+        text += (
+            f"🆔 {pid}\n"
+            f"📦 {name}\n"
+            f"📊 {pack}\n"
+            f"💰 {price} сом\n"
+            f"📦 Остаток: {stock}\n\n"
+        )
+
     await message.answer(text)
 
 @dp.message(F.text == "🗑 Удалить товар")
@@ -321,6 +552,87 @@ async def delete_product(call: CallbackQuery):
     delete_product_by_id(pid)
     await call.message.edit_text("✅ Удалено")
     await call.answer()
+
+@dp.message(F.text == "✏️ Изменить товар")
+@seller_only
+async def edit_product_menu(message: Message, state: FSMContext):
+
+    seller = get_seller(message.from_user.id)
+    products = get_products(seller[0])
+
+    if not products:
+        await message.answer("Нет товаров")
+        return
+
+    await message.answer(
+        "Выберите товар для изменения:",
+        reply_markup=edit_products_kb(products)
+    )
+
+    await state.set_state(EditProduct.choose)
+
+@dp.callback_query(F.data.startswith("editprod_"), EditProduct.choose)
+async def choose_edit_product(call: CallbackQuery, state: FSMContext):
+
+    pid = int(call.data.split("_")[1])
+
+    await state.update_data(product_id=pid)
+
+    await call.message.edit_text(
+        "Что изменить?",
+        reply_markup=edit_fields_kb()
+    )
+
+    await state.set_state(EditProduct.field)
+    await call.answer()
+
+@dp.callback_query(F.data.startswith("edit_"), EditProduct.field)
+async def choose_edit_field(call: CallbackQuery, state: FSMContext):
+
+    field = call.data.replace("edit_", "")
+
+    if field == "cancel":
+        await call.message.edit_text("❌ Отменено")
+        await state.clear()
+        return
+
+    await state.update_data(field=field)
+
+    text_map = {
+        "name": "Введите новое название:",
+        "amount": "Введите новую фасовку:",
+        "price": "Введите новую цену:",
+        "stock": "Введите новый остаток:"
+    }
+
+    await call.message.answer(text_map[field])
+
+    await state.set_state(EditProduct.value)
+    await call.answer()
+
+@dp.message(EditProduct.value)
+@seller_only
+async def save_edit_value(message: Message, state: FSMContext):
+
+    data = await state.get_data()
+
+    pid = data["product_id"]
+    field = data["field"]
+    value = message.text.strip()
+
+    # Валидация
+    if field in ["price", "stock"]:
+        try:
+            value = float(value) if field == "price" else int(value)
+        except:
+            await message.answer("Введите число")
+            return
+
+    update_product_field(pid, field, value)
+
+    await message.answer("✅ Товар обновлён")
+
+    await state.clear()
 
 # ---------------- ЗАКАЗЫ ----------------
 @dp.message(F.text == "📥 Заказы")

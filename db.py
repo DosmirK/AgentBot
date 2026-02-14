@@ -61,6 +61,7 @@ def create_tables():
                 name TEXT,
                 amount TEXT,
                 price REAL,
+                stock INTEGER,
                 FOREIGN KEY (seller_id) REFERENCES sellers(id)
             )
             """)
@@ -140,6 +141,16 @@ def get_seller(tg_id):
         return None
 
 
+def get_all_sellers():
+    cursor.execute("SELECT * FROM sellers")
+    return cursor.fetchall()
+
+
+def get_all_buyers():
+    cursor.execute("SELECT DISTINCT buyer_id FROM orders")
+    return cursor.fetchall()
+
+
 def get_seller_by_id(seller_id):
     try:
         return cursor.execute("""
@@ -211,15 +222,15 @@ def get_all_shops():
 
 # ----------------- ТОВАРЫ -----------------
 
-def add_product(seller_id, name, amount, price):
+def add_product(seller_id, name, amount, price, stock):
     try:
         with lock:
 
             cursor.execute("""
                 INSERT INTO products
-                (seller_id, name, amount, price)
-                VALUES (?, ?, ?, ?)
-            """, (seller_id, name, amount, price))
+                (seller_id, name, amount, price, stock)
+                VALUES (?, ?, ?, ?, ?)
+            """, (seller_id, name, amount, price, stock))
 
             conn.commit()
 
@@ -233,7 +244,7 @@ def add_product(seller_id, name, amount, price):
 def get_products(seller_id):
     try:
         return cursor.execute("""
-            SELECT id, name, amount, price
+            SELECT id, name, amount, price, stock
             FROM products
             WHERE seller_id=?
         """, (seller_id,)).fetchall()
@@ -242,13 +253,12 @@ def get_products(seller_id):
         logging.error(f"❌ get_products: {e}")
         return []
 
-
 def get_products_by_shop(shop_id):
     try:
         return cursor.execute("""
             SELECT id, name, amount, price
             FROM products
-            WHERE seller_id=?
+            WHERE seller_id=? AND stock > 0
         """, (shop_id,)).fetchall()
 
     except Exception as e:
@@ -289,6 +299,41 @@ def get_product_by_name_and_seller(name, seller_id):
         "SELECT * FROM products WHERE name=? AND seller_id=?",
         (name, seller_id)
     ).fetchone()
+
+def update_product_field(pid: int, field: str, value):
+
+    allowed = ["name", "amount", "price", "stock"]
+
+    if field not in allowed:
+        return False
+
+    cursor.execute(
+        f"UPDATE products SET {field}=? WHERE id=?",
+        (value, pid)
+    )
+
+    conn.commit()
+
+    return True
+
+
+def decrease_stock(product_id, amount):
+    try:
+        with lock:
+
+            cursor.execute("""
+                UPDATE products
+                SET stock = stock - ?
+                WHERE id=? AND stock >= ?
+            """, (amount, product_id, amount))
+
+            conn.commit()
+
+            return cursor.rowcount > 0
+
+    except Exception as e:
+        logging.error(f"❌ decrease_stock: {e}")
+        return False
 
 
 # ----------------- ЗАКАЗЫ -----------------
@@ -381,6 +426,24 @@ def get_seller_tg_by_product(product_id):
     except Exception as e:
         logging.error(f"❌ get_seller_tg_by_product: {e}")
         return None
+
+
+def search_products_by_name(shop_id: int, query: str):
+
+    q = f"%{query}%"
+
+    logging.info(f"[DB] Search: seller_id={shop_id}, query={q}")
+
+    cursor.execute(
+        "SELECT * FROM products WHERE seller_id=? AND name LIKE ? COLLATE NOCASE",
+        (shop_id, q)
+    )
+
+    result = cursor.fetchall()
+
+    logging.info(f"[DB] Result count = {len(result)}")
+
+    return result
 
 
 # ----------------- ЗАКРЫТИЕ -----------------

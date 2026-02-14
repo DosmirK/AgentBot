@@ -318,6 +318,10 @@ async def order_address(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "buyer_confirm_yes", OrderState.confirm)
 async def confirm_order(call: CallbackQuery, state: FSMContext):
+    """
+    Покупатель подтверждает заказ.
+    Теперь просто создаём заказ в базе, но склад ещё не уменьшаем.
+    """
     data = await state.get_data()
     product = get_product(data["product_id"])
     if not product:
@@ -326,22 +330,12 @@ async def confirm_order(call: CallbackQuery, state: FSMContext):
         return
 
     amount = int(data["amount"])
-    decrease_stock(product[0], amount)
 
-    # Проверяем остаток после уменьшения
-    product_after = get_product(product[0])
-    if product_after[5] <= 5:  # предполагается, что индекс 5 — это stock
-        seller = get_seller_by_id(product_after[1])
-        if seller:
-            await bot.send_message(
-                seller[1],
-                f"⚠️ Остаток товара '{product_after[2]}' низкий: {product_after[5]} шт."
-            )
-
+    # Создаём заказ с начальным статусом "ожидает принятия"
     order_id = create_order(
         call.from_user.id,
-        product[1],
-        product[0],
+        product[1],      # seller_id
+        product[0],      # product_id
         amount,
         data["address"]
     )
@@ -367,19 +361,7 @@ async def confirm_order(call: CallbackQuery, state: FSMContext):
 👤 Покупатель: {call.from_user.full_name} """
         await bot.send_message(seller[1], text, reply_markup=order_confirm_kb(order_id))
 
-        admin_text = (
-            f"📊 Новый заказ (копия)\n\n"
-            f"🆔 #{order_id}\n"
-            f"🏪 {seller_name}\n"
-            f"📦 {product[2]}\n"
-            f"🔢 {amount}\n"
-            f"💵 {total} сом\n"
-            f"👤 Покупатель: {call.from_user.full_name}\n"
-            f"🆔 ID: {call.from_user.id}"
-        )
-        await bot.send_message(ADMIN_ID, admin_text)
-
-    await call.message.answer(f"✅ Заказ #{order_id} отправлен")
+    await call.message.answer(f"✅ Заказ #{order_id} создан и отправлен продавцу")
     await state.clear()
     await call.answer()
 
@@ -673,17 +655,101 @@ async def seller_orders(message: Message, state: FSMContext):
 # ---------------- ПОДТВЕРЖДЕНИЕ ----------------
 @dp.callback_query(F.data.startswith("order_ok_"))
 async def order_accept(call: CallbackQuery):
+    """
+    Продавец принимает заказ:
+    - уменьшаем склад
+    - проверяем остаток
+    - меняем статус
+    - уведомляем покупателя
+    - уведомляем админа
+    """
+
+    # Получаем order_id
     try:
         order_id = int(call.data.split("_")[2])
-    except:
-        await call.answer("Ошибка")
+    except Exception:
+        await call.answer("❌ Ошибка ID заказа")
         return
+
+    # Получаем заказ
+    order = get_order(order_id)
+    if not order:
+        await call.answer("❌ Заказ не найден")
+        return
+
+    buyer_tg = order[1]
+    seller_id = order[2]
+    product_id = order[3]
+    amount = int(order[4])
+
+
+    # Получаем товар
+    product = get_product(product_id)
+    if not product:
+        await call.answer("❌ Товар не найден")
+        return
+
+    product_name = product[2]
+    price = float(product[4])
+
+    # Получаем продавца
+    seller = get_seller_by_id(seller_id)
+    seller_name = seller[2] if seller else "Неизвестный магазин"
+    seller_chat = seller[1] if seller else None
+
+    # Уменьшаем склад
+    decrease_stock(product_id, amount)
+
+    # Проверяем остаток
+    product_after = get_product(product_id)
+
+    if product_after and product_after[5] <= 5:
+        if seller_chat:
+            await bot.send_message(
+                seller_chat,
+                f"⚠️ Остаток товара «{product_after[2]}» низкий: {product_after[5]} шт."
+            )
+
+    # Меняем статус заказа
     update_order_status(order_id, "принятый")
+
+    # Получаем покупателя
     buyer = get_buyer_by_order(order_id)
-    if buyer:
-        await bot.send_message(buyer[0], "✅ Заказ принят")
-    await call.message.edit_text(call.message.text + "\n✅ Принято")
-    await call.answer()
+
+    buyer_id = buyer[0] if buyer else None
+
+    # Уведомляем покупателя
+    if buyer_id:
+        await bot.send_message(
+            buyer_id,
+            f"✅ Ваш заказ #{order_id} принят продавцом"
+        )
+
+    # Считаем сумму
+    total = price * amount
+
+    # Сообщение админу (ТОЛЬКО после принятия)
+    admin_text = (
+        f"📊 Принятый заказ\n\n"
+        f"🆔 #{order_id}\n"
+        f"🏪 Магазин: {seller_name}\n"
+        f"📦 Товар: {product_name}\n"
+        f"📊 Фасовка: {product[3]}\n"
+        f"🔢 Кол-во: {amount}\n"
+        f"💰 Цена: {price} сом\n"
+        f"💵 Итого: {total} сом\n"
+        f"👤 Покупатель: {buyer_tg}\n"
+        f"🆔 ID: {buyer_id if buyer_id else '—'}"
+    )
+
+    await bot.send_message(ADMIN_ID, admin_text)
+
+    # Обновляем сообщение продавцу
+    await call.message.edit_text(
+        call.message.text + "\n\n✅ Заказ принят"
+    )
+
+    await call.answer("Заказ подтверждён ✅")
 
 @dp.callback_query(F.data.startswith("order_no_"))
 async def order_decline(call: CallbackQuery, state: FSMContext):

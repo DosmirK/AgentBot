@@ -495,6 +495,7 @@ async def my_products(message: Message, state: FSMContext):
         await message.answer("Нет товаров")
         return
 
+    max_len = 3500   # запас до лимита
     text = "📦 Ваши товары:\n\n"
 
     for p in products:
@@ -504,7 +505,7 @@ async def my_products(message: Message, state: FSMContext):
         price = p[3]
         stock = p[4]
 
-        text += (
+        block = (
             f"🆔 {pid}\n"
             f"📦 {name}\n"
             f"📊 {pack}\n"
@@ -512,7 +513,17 @@ async def my_products(message: Message, state: FSMContext):
             f"📦 Остаток: {stock}\n\n"
         )
 
-    await message.answer(text)
+        # Если текст стал слишком длинным — отправляем и начинаем заново
+        if len(text) + len(block) > max_len:
+            await message.answer(text)
+            text = ""
+
+        text += block
+
+    # Отправляем остаток
+    if text:
+        await message.answer(text)
+
 
 @dp.message(F.text == "🗑 Удалить товар")
 @seller_only

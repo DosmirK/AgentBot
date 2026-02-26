@@ -9,7 +9,6 @@ from aiogram.types import (
 )
 
 # ------------------- КОНСТАНТЫ -------------------
-
 BTN_BUYER = "🛒 Покупатель"
 BTN_SELLER = "🏪 Продавец"
 
@@ -17,6 +16,7 @@ BTN_ADD_PRODUCT = "➕ Добавить товар"
 BTN_MY_PRODUCTS = "📦 Мои товары"
 BTN_DELETE_PRODUCT = "🗑 Удалить товар"
 BTN_EDIT_PRODUCT = "✏️ Изменить товар"
+BTN_DELETE_CATEGORY = "🗂 Удалить категорию"
 BTN_ORDERS = "📥 Заказы"
 
 BTN_SHOPS = "📋 Список магазинов"
@@ -29,27 +29,21 @@ BTN_DECLINE = "❌ Отклонить"
 
 
 # ------------------- ВСПОМОГАТЕЛЬНЫЕ -------------------
-
 def _safe_str(value, default: str = "—") -> str:
-    """
-    Безопасно приводит к строке
-    """
+    
     if value is None:
         return default
     return str(value)
 
 
 def _safe_iter(data: Optional[Iterable]) -> List:
-    """
-    Гарантирует список
-    """
+    
     if not data:
         return []
     return list(data)
 
 
 # ------------------- ОСНОВНЫЕ КЛАВИАТУРЫ -------------------
-
 def role_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -60,20 +54,24 @@ def role_kb() -> ReplyKeyboardMarkup:
         selective=True
     )
 
-
 def seller_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_ADD_PRODUCT)],
-            [KeyboardButton(text=BTN_MY_PRODUCTS)],
-            [KeyboardButton(text=BTN_DELETE_PRODUCT)],
-            [KeyboardButton(text=BTN_EDIT_PRODUCT)],
-            [KeyboardButton(text=BTN_ORDERS)]
+            [
+                KeyboardButton(text=BTN_ADD_PRODUCT),
+                KeyboardButton(text=BTN_MY_PRODUCTS)
+            ],
+            [
+                KeyboardButton(text=BTN_EDIT_PRODUCT),
+                KeyboardButton(text=BTN_DELETE_PRODUCT)
+            ],
+            [
+                KeyboardButton(text=BTN_DELETE_CATEGORY),
+                KeyboardButton(text=BTN_ORDERS)
+            ]
         ],
-        resize_keyboard=True,
-        selective=True
+        resize_keyboard=True
     )
-
 
 def buyer_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -90,21 +88,14 @@ def hide_kb() -> ReplyKeyboardRemove:
 
 
 # ------------------- INLINE КЛАВИАТУРЫ -------------------
-
 def shops_kb(shops) -> InlineKeyboardMarkup:
-    """
-    shops = [(id, name), ...]
-    """
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
 
-    for shop in _safe_iter(shops):
+    for shop in shops:
 
-        if len(shop) < 2:
-            continue
-
-        shop_id = shop[0]
-        name = _safe_str(shop[1], "Без названия")
+        shop_id = shop["id"]
+        name = shop.get("shop_name", "Без названия")
 
         kb.inline_keyboard.append([
             InlineKeyboardButton(
@@ -115,11 +106,7 @@ def shops_kb(shops) -> InlineKeyboardMarkup:
 
     return kb
 
-
 def products_kb(products) -> InlineKeyboardMarkup:
-    """
-    products = [(id, name, amount, price), ...]
-    """
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
 
@@ -144,12 +131,7 @@ def products_kb(products) -> InlineKeyboardMarkup:
 
     return kb
 
-
 def search_products_kb(products) -> InlineKeyboardMarkup:
-    """
-    products = [(id, name, amount, price), ...]
-    Для результатов поиска
-    """
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
 
@@ -174,7 +156,6 @@ def search_products_kb(products) -> InlineKeyboardMarkup:
 
     return kb
 
-
 def edit_products_kb(products):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
@@ -189,7 +170,6 @@ def edit_products_kb(products):
 
     return kb
 
-
 def edit_fields_kb():
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -202,29 +182,30 @@ def edit_fields_kb():
             InlineKeyboardButton(text="📊 Остаток", callback_data="edit_stock")
         ],
         [
+            InlineKeyboardButton(text="🖼 Картинка", callback_data="edit_image")
+        ],
+        [
             InlineKeyboardButton(text="❌ Отмена", callback_data="edit_cancel")
         ]
     ])
 
     return kb
 
-
-def order_confirm_kb(order_id: int) -> InlineKeyboardMarkup:
+def order_confirm_kb(order_ids_str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=BTN_ACCEPT,
-                    callback_data=f"order_ok_{order_id}"
+                    text=  BTN_ACCEPT,
+                    callback_data=f"order_ok_{order_ids_str}"
                 ),
                 InlineKeyboardButton(
-                    text=BTN_DECLINE,
-                    callback_data=f"order_no_{order_id}"
-                )
+                    text= BTN_DECLINE,
+                    callback_data=f"order_no_{order_ids_str}"
+                ),
             ]
         ]
     )
-
 
 def order_confirm_buyer_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -242,11 +223,7 @@ def order_confirm_buyer_kb() -> InlineKeyboardMarkup:
         ]
     )
 
-
 def delete_products_kb(products) -> InlineKeyboardMarkup:
-    """
-    products = [(id, name, amount, price), ...]
-    """
 
     kb = InlineKeyboardMarkup(inline_keyboard=[])
 
@@ -270,3 +247,63 @@ def delete_products_kb(products) -> InlineKeyboardMarkup:
         ])
 
     return kb
+
+def categories_kb_buy(categories, prefix=""):
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+
+    for c in categories:
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=c["name"],
+                callback_data=f"{prefix}{c['id']}"
+            )
+        ])
+
+    return kb
+
+def categories_kb(categories):
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+
+    for cid, name in categories:
+
+        kb.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"📂 {name}",
+                callback_data=f"cat_{cid}"
+            )
+        ])
+
+    kb.inline_keyboard.append([
+        InlineKeyboardButton(
+            text="➕ Добавить категорию",
+            callback_data="cat_add"
+        )
+    ])
+
+    return kb
+
+
+def product_select_kb(pid: int):
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Выбрать",
+                    callback_data=f"product_{pid}"
+                )
+            ]
+        ]
+    )
+
+def cart_menu_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Добавить ещё")],
+            [KeyboardButton(text="📦 Оформить заказ")],
+            [KeyboardButton(text="❌ Очистить корзину")]
+        ],
+        resize_keyboard=True
+    )

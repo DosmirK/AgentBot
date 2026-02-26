@@ -4,8 +4,13 @@ class SellerRegister(StatesGroup):
     shop_name = State()
 
 class AddProduct(StatesGroup):
+
+    category = State()
+    new_category = State()
+
     name = State()
     amount = State()
+    image = State()
     price = State()
     stock = State()
 
@@ -21,7 +26,13 @@ class DeclineState(StatesGroup):
 class BuyerState(StatesGroup):
     search = State()
 
+class DeleteProduct(StatesGroup):
+    category = State()
+    product = State()
+
+
 class EditProduct(StatesGroup):
-    choose = State()
+    category = State()
+    product = State()
     field = State()
     value = State()

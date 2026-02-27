@@ -24,7 +24,13 @@ class DeclineState(StatesGroup):
     reason = State()
 
 class BuyerState(StatesGroup):
-    search = State()
+    register_name = State()    
+    register_address = State()  
+    search = State() 
+
+class ProfileEdit(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_address = State()
 
 class DeleteProduct(StatesGroup):
     category = State()

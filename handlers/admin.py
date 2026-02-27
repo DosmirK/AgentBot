@@ -12,7 +12,8 @@ from database import (
     activate_seller,
     deactivate_seller,
     get_all_sellers,
-    get_all_buyers
+    get_all_buyers,
+    delete_seller_full
 )
 
 
@@ -44,7 +45,7 @@ async def allow_seller(message: Message):
 
         await message.bot.send_message(
             tg_id,
-            "✅ Вам открыт доступ продавца.\nНажмите «🏪 Продавец»"
+            "✅ Вам открыт доступ продавца.\nНажмите «🏪 Фирма»"
         )
 
     except Exception as e:
@@ -92,7 +93,7 @@ async def admin_sellers(message: Message):
         await message.answer("❌ Продавцов нет")
         return
 
-    text = "🏪 Продавцы:\n\n"
+    text = "🏪 Фирмы:\n\n"
 
     for s in sellers:
 
@@ -106,6 +107,37 @@ async def admin_sellers(message: Message):
         )
 
     await message.answer(text)
+
+
+# ---------------- DELETE SELLER ----------------
+
+@router.message(Command("delete_seller"))
+async def delete_seller_command(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    try:
+        tg_id = int(message.text.split()[1])
+    except:
+        await message.answer("Пример: /delete_seller 123456789")
+        return
+
+    success = delete_seller_full(tg_id)
+
+    if not success:
+        await message.answer("❌ Фирма не найдена или ошибка")
+        return
+
+    await message.answer("🗑 Фирма и все её данные удалены")
+
+    try:
+        await message.bot.send_message(
+            tg_id,
+            "🗑 Ваша фирма была удалена администратором"
+        )
+    except:
+        pass
 
 
 # ---------------- BUYERS ----------------

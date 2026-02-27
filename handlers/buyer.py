@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from keyboards import *
-from states import BuyerState, OrderState
+from states import BuyerState, OrderState, ProfileEdit
 from database import *
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -61,29 +61,199 @@ async def show_products_for_buyer(message, products, title="📦 Товары:")
 
 # ---------------- ПОКУПАТЕЛЬ ----------------
 
-@router.message(F.text == "🛒 Покупатель")
-async def buyer_start(message: Message, state: FSMContext):
+@router.message(F.text == "🛒 Магазин")
+async def buyer_register(message: Message, state: FSMContext):
+    buyer = get_buyer(message.from_user.id)
+    if buyer:
+        await message.answer(
+            f"Добро пожаловать в ваш магазин, <b>{buyer['shop_name']}</b>!",
+            parse_mode="HTML",
+            reply_markup=buyer_menu_kb()
+        )
+        return
 
-    await state.clear()
+    await state.set_state(BuyerState.register_name)
+    await message.answer("Введите название вашего магазина:")
+
+
+@router.message(BuyerState.register_name)
+async def buyer_enter_name(message: Message, state: FSMContext):
+    shop_name = message.text.strip()
+    if len(shop_name) < 2:
+        await message.answer("Название слишком короткое, введите снова:")
+        return
+
+    await state.update_data(shop_name=shop_name)
+    await state.set_state(BuyerState.register_address)
+    await message.answer("Введите адрес вашего магазина:")
+
+
+@router.message(BuyerState.register_address)
+async def buyer_enter_address(message: Message, state: FSMContext):
+    address = message.text.strip()
+    if len(address) < 5:
+        await message.answer("Адрес слишком короткий, введите снова:")
+        return
+
+    data = await state.get_data()
+    shop_name = data.get("shop_name")
+
+    add_buyer(message.from_user.id, shop_name, address)
 
     await message.answer(
-        "Выберите магазин:",
+        f"✅ Ваш магазин зарегистрирован:\n<b>{shop_name}</b>\n📍 {address}",
+        parse_mode="HTML",
         reply_markup=buyer_menu_kb()
     )
 
+    await state.clear()
 
-@router.message(F.text == "📋 Список магазинов")
+
+@router.message(F.text == "📋 Список фирм")
 async def show_shops(message: Message):
 
     shops = get_all_shops()
 
     if not shops:
-        await message.answer("❌ Магазинов нет")
+        await message.answer("❌ Фирм нет")
         return
 
     await message.answer(
         "🏪 Выберите магазин:",
         reply_markup=shops_kb(shops)
+    )
+
+
+@router.message(F.text == "📥 Мои заказы")
+async def buyer_orders(message: Message):
+
+    buyer = get_buyer(message.from_user.id)
+
+    if not buyer:
+        await message.answer("❌ Сначала зарегистрируйтесь")
+        return
+
+    orders = get_buyer_orders(message.from_user.id)
+
+    if not orders:
+        await message.answer("❌ У вас пока нет заказов.")
+        return
+
+    orders_dict = {}
+
+    for o in orders:
+        oid = o["order_id"]
+
+        if oid not in orders_dict:
+            seller = get_seller_by_id(o["seller_id"])
+            seller_name = seller["shop_name"] if seller else "Неизвестно"
+
+            orders_dict[oid] = {
+                "status": o["status"],
+                "address": o["address"],
+                "total_amount": o["total_amount"],
+                "created_at": o["created_at"],
+                "seller_name": seller_name,
+                "items": []
+            }
+
+        orders_dict[oid]["items"].append(o)
+
+    text = "📥 Мои заказы:\n\n"
+
+    for order_id, data in orders_dict.items():
+
+        text += f"🆔 Заказ #{order_id}\n"
+        text += f"🏪 Фирма: {data['seller_name']}\n"
+        text += f"📅 Дата: {data['created_at'].strftime('%d.%m.%Y %H:%M')}\n"
+        text += f"📍 Адрес: {data['address']}\n"
+        text += f"💵 Итого: {data['total_amount']} сом\n"
+        text += f"📌 Статус: {data['status']}\n"
+        text += "📦 Товары:\n"
+
+        for item in data["items"]:
+            product = get_product(item["product_id"])
+            packaging = product["amount"] if product else "Не указано"
+
+            text += (
+                f"  • {item['product_name']}\n"
+                f"    Фасовка: {packaging}\n"
+                f"    Кол-во: {item['quantity']} шт\n"
+                f"    Цена: {item['price']} сом\n"
+                f"    Сумма: {item['total_price']} сом\n"
+            )
+
+        text += "\n"
+
+    await message.answer(text)
+
+
+@router.message(F.text == "👤 Профиль")
+async def show_profile(message: Message):
+
+    buyer = get_buyer(message.from_user.id)
+
+    if not buyer:
+        await message.answer("❌ Сначала зарегистрируйтесь")
+        return
+
+    text = (
+        "👤 Ваш профиль\n\n"
+        f"🏪 Название: {buyer['shop_name']}\n"
+        f"📍 Адрес: {buyer['address']}\n"
+    )
+
+    await message.answer(text, reply_markup=profile_kb())
+
+
+@router.message(F.text == "✏️ Изменить название")
+async def edit_name_start(message: Message, state: FSMContext):
+    await message.answer("Введите новое название магазина:")
+    await state.set_state(ProfileEdit.waiting_for_name)
+
+
+@router.message(ProfileEdit.waiting_for_name)
+async def save_new_name(message: Message, state: FSMContext):
+    update_buyer_name(message.from_user.id, message.text)
+
+    await message.answer("✅ Название обновлено")
+    await state.clear()
+
+    await show_profile(message)
+
+
+@router.message(F.text == "📍 Изменить адрес")
+async def edit_address_start(message: Message, state: FSMContext):
+    await message.answer("Введите новый адрес:")
+    await state.set_state(ProfileEdit.waiting_for_address)
+
+
+@router.message(ProfileEdit.waiting_for_address)
+async def save_new_address(message: Message, state: FSMContext):
+    update_buyer_address(message.from_user.id, message.text)
+
+    await message.answer("✅ Адрес обновлён")
+    await state.clear()
+
+    await show_profile(message)
+
+
+@router.message(ProfileEdit.waiting_for_name, F.text == "⬅️ Назад")
+@router.message(ProfileEdit.waiting_for_address, F.text == "⬅️ Назад")
+async def cancel_edit(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Редактирование отменено.",
+        reply_markup=buyer_menu_kb()
+    )
+
+
+@router.message(F.text == "⬅️ Назад")
+async def back_general(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "🏠 Главное меню",
+        reply_markup=buyer_menu_kb()
     )
 
 
@@ -101,11 +271,10 @@ async def choose_shop(call: CallbackQuery, state: FSMContext):
     categories = get_categories(seller_id)
 
     if not categories:
-        await call.message.answer("❌ В магазине нет категорий")
+        await call.message.answer("❌ В фирме нет категорий")
         await call.answer()
         return
 
-    # 👉 Инициализация корзины
     await state.update_data(
         seller_id=seller_id,
         cart=[]
@@ -132,7 +301,7 @@ async def buyer_choose_category(call: CallbackQuery, state: FSMContext):
     seller_id = data.get("seller_id")
 
     if not seller_id:
-        await call.answer("Ошибка магазина")
+        await call.answer("Ошибка фирмы")
         return
 
     products = get_products_full_by_seller(seller_id)
@@ -171,7 +340,7 @@ async def search_product(message: Message, state: FSMContext):
     seller_id = data.get("seller_id")
 
     if not seller_id:
-        await message.answer("Сначала выберите магазин 👇")
+        await message.answer("Сначала выберите фирму 👇")
         await state.clear()
         return
 
@@ -203,7 +372,6 @@ async def choose_product(call: CallbackQuery, state: FSMContext):
         await call.answer("Ошибка товара")
         return
 
-    # ✅ СОХРАНЯЕМ ID
     await state.update_data(
         product_id=product_id
     )
@@ -237,7 +405,6 @@ async def order_amount(message: Message, state: FSMContext):
     print("FSM DATA:", await state.get_data())
     product_id = data.get("product_id")
 
-    # ✅ ГЛАВНАЯ ЗАЩИТА
     if not product_id:
         await message.answer("❗ Сначала выберите товар")
         await state.set_state(BuyerState.search)
@@ -260,7 +427,6 @@ async def order_amount(message: Message, state: FSMContext):
         )
         return
 
-    # ➕ В корзину
     cart.append({
         "product_id": product_id,
         "amount": amount
@@ -268,7 +434,7 @@ async def order_amount(message: Message, state: FSMContext):
 
     await state.update_data(
         cart=cart,
-        product_id=None   # ✅ очищаем
+        product_id=None  
     )
 
     await message.answer(
@@ -326,11 +492,57 @@ async def cart_checkout(message: Message, state: FSMContext):
         return
 
     await message.answer(
-    "Введите адрес доставки:",
-    reply_markup=buyer_menu_kb()
-)
+        "📝 Переходим к оформлению...",
+        reply_markup=buyer_menu_kb()
+    )
 
-    await state.set_state(OrderState.address)
+    buyer = get_buyer(message.from_user.id)
+
+    if buyer and buyer["address"]:
+        await state.update_data(address=buyer["address"])
+
+        await show_order_preview(message, state)
+
+    else:
+        await message.answer("Введите адрес доставки:")
+        await state.set_state(OrderState.address)
+
+
+async def show_order_preview(message: Message, state: FSMContext):
+
+    data = await state.get_data()
+    cart = data.get("cart", [])
+    address = data.get("address")
+
+    text = "📝 Ваш заказ:\n\n"
+    total_sum = 0
+
+    for item in cart:
+        product = get_product(item["product_id"])
+
+        name = product["name"]
+        packaging = product.get("amount", "Не указано")
+        price = float(product["price"])
+        amount = item["amount"]
+
+        cost = price * amount
+        total_sum += cost
+
+        text += (
+            f"📦 {name}\n"
+            f"📦 Фасовка: {packaging}\n"
+            f"🔢 {amount} × {price} = {cost} сом\n\n"
+        )
+
+    text += f"💵 Итого: {total_sum} сом\n"
+    text += f"📍 Адрес: {address}"
+
+    await message.answer(
+        text,
+        reply_markup=order_confirm_buyer_kb()
+    )
+
+    await state.set_state(OrderState.confirm)
 
 
 # ---------------- АДРЕС ----------------
@@ -346,38 +558,9 @@ async def order_address(message: Message, state: FSMContext):
 
     await state.update_data(address=address)
 
-    data = await state.get_data()
-    cart = data.get("cart", [])
+    update_buyer_address(message.from_user.id, address)
 
-    text = "📝 Ваш заказ:\n\n"
-
-    total_sum = 0
-
-    for item in cart:
-
-        product = get_product(item["product_id"])
-
-        name = product["name"]
-        price = float(product["price"])
-        amount = item["amount"]
-
-        cost = price * amount
-        total_sum += cost
-
-        text += (
-            f"📦 {name}\n"
-            f"🔢 {amount} × {price} = {cost} сом\n\n"
-        )
-
-    text += f"💵 Итого: {total_sum} сом\n"
-    text += f"📍 Адрес: {address}"
-
-    await message.answer(
-        text,
-        reply_markup=order_confirm_buyer_kb()
-    )
-
-    await state.set_state(OrderState.confirm)
+    await show_order_preview(message, state)
 
 
 # ---------------- ПОДТВЕРЖДЕНИЕ ----------------
@@ -389,71 +572,65 @@ async def confirm_order(call: CallbackQuery, state: FSMContext):
 
     cart = data.get("cart", [])
     address = data.get("address")
+    seller_id = data.get("seller_id")
 
     if not cart:
         await call.message.answer("❌ Корзина пуста")
         await state.clear()
         return
 
-    first_product = get_product(cart[0]["product_id"])
-
-    if not first_product:
-        await call.message.answer("❌ Ошибка товара")
+    if not seller_id:
+        await call.message.answer("❌ Ошибка магазина")
         await state.clear()
         return
 
-    seller = get_seller_by_id(first_product["seller_id"])
+    order_id = create_order_full(
+        call.from_user.id,
+        seller_id,
+        cart,
+        address
+    )
+
+    if not order_id:
+        await call.message.answer("❌ Ошибка создания заказа")
+        await state.clear()
+        return
+
+    seller = get_seller_by_id(seller_id)
 
     if not seller:
         await call.message.answer("❌ Продавец не найден")
         await state.clear()
         return
 
+    buyer = get_buyer(call.from_user.id)
+
+    items = get_order_items(order_id)
+
     text = "📥 Новый заказ\n\n"
     total_sum = 0
-    order_ids = []
 
-    for item in cart:
-
-        product = get_product(item["product_id"])
-
-        if not product:
-            continue
-
-        amount = int(item["amount"])
-        price = float(product["price"])
-        cost = amount * price
-
-        order_id = create_order(
-            call.from_user.id,
-            product["seller_id"],
-            product["id"],
-            amount,
-            address
-        )
-
-        if order_id:
-            order_ids.append(order_id)
-
-        total_sum += cost
+    for item in items:
+        total_sum += float(item["total_price"])
 
         text += (
-            f"📦 {product['name']}\n"
-            f"🔢 {amount} × {price} = {cost} сом\n\n"
+            f"📦 {item['product_name']}\n"
+            f"📦 Фасовка: {item['amount']}\n"
+            f"🔢 {item['quantity']} × {item['price']} = {item['total_price']} сом\n\n"
         )
 
     text += f"📍 Адрес: {address}\n"
     text += f"💵 Итого: {total_sum} сом\n\n"
-    text += f"👤 Покупатель: {call.from_user.full_name}"
+    text += f"🏪 Магазин: {buyer['shop_name']}"
 
     await call.bot.send_message(
         seller["tg_id"],
         text,
-        reply_markup=order_confirm_kb(",".join(map(str, order_ids))) 
+        reply_markup=order_confirm_kb(str(order_id))
     )
 
     await call.message.answer(
-        f"✅ Заказ оформлен ({len(cart)} товаров)"
+        f"✅ Заказ оформлен (№{order_id})"
     )
 
     await state.clear()

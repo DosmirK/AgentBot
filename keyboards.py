@@ -9,8 +9,8 @@ from aiogram.types import (
 )
 
 # ------------------- КОНСТАНТЫ -------------------
-BTN_BUYER = "🛒 Покупатель"
-BTN_SELLER = "🏪 Продавец"
+BTN_BUYER = "🛒 Магазин"
+BTN_SELLER = "🏪 Фирма"
 
 BTN_ADD_PRODUCT = "➕ Добавить товар"
 BTN_MY_PRODUCTS = "📦 Мои товары"
@@ -19,7 +19,7 @@ BTN_EDIT_PRODUCT = "✏️ Изменить товар"
 BTN_DELETE_CATEGORY = "🗂 Удалить категорию"
 BTN_ORDERS = "📥 Заказы"
 
-BTN_SHOPS = "📋 Список магазинов"
+BTN_SHOPS = "📋 Список фирм"
 
 BTN_CONFIRM = "✅ Подтвердить"
 BTN_CANCEL = "❌ Отменить"
@@ -76,12 +76,22 @@ def seller_menu() -> ReplyKeyboardMarkup:
 def buyer_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_SHOPS)]
+            [KeyboardButton(text=BTN_SHOPS)],
+            [KeyboardButton(text="📥 Мои заказы"), KeyboardButton(text="👤 Профиль")]
         ],
         resize_keyboard=True,
         selective=True
     )
 
+def profile_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="✏️ Изменить название")],
+            [KeyboardButton(text="📍 Изменить адрес")],
+            [KeyboardButton(text="⬅️ Назад")]
+        ],
+        resize_keyboard=True
+    )
 
 def hide_kb() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()

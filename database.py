@@ -43,6 +43,15 @@ def create_tables():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS buyers (
+        id SERIAL PRIMARY KEY,
+        tg_id BIGINT UNIQUE,
+        shop_name TEXT,
+        address TEXT
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS categories (
         id SERIAL PRIMARY KEY,
         seller_id INTEGER REFERENCES sellers(id) ON DELETE CASCADE,
@@ -68,11 +77,24 @@ def create_tables():
     CREATE TABLE IF NOT EXISTS orders (
         id SERIAL PRIMARY KEY,
         buyer_tg BIGINT,
-        seller_id INTEGER REFERENCES sellers(id),
-        product_id INTEGER REFERENCES products(id),
-        amount TEXT,
+        seller_id INTEGER REFERENCES sellers(id) ON DELETE CASCADE,
         address TEXT,
-        status TEXT
+        total_amount NUMERIC,
+        status TEXT DEFAULT 'new',
+        created_at TIMESTAMP DEFAULT NOW()
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS order_items (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id),
+        product_name TEXT,
+        price NUMERIC,
+        quantity INTEGER,
+        total_price NUMERIC,
+        amount TEXT
     )
     """)
 
@@ -80,6 +102,22 @@ def create_tables():
     cur.close()
     release_connection(conn)
     logging.info("✅ Tables created")
+
+
+def delete_seller_full(tg_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("DELETE FROM sellers WHERE tg_id=%s", (tg_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        release_connection(conn)
 
 
 # ----------------- ПРОДАВЦЫ -----------------
@@ -208,6 +246,91 @@ def get_all_shops():
     cur.close()
     release_connection(conn)
     return result
+
+# ----------------- ПОКУПАТЕЛИ -----------------
+
+def add_buyer(tg_id: int, shop_name: str, address: str):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO buyers (tg_id, shop_name, address)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (tg_id) DO UPDATE
+            SET shop_name = EXCLUDED.shop_name,
+                address = EXCLUDED.address
+        """, (tg_id, shop_name, address))
+        conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"❌ add_buyer: {e}")
+        return False
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def get_buyer(tg_id: int):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+    cur.execute("SELECT * FROM buyers WHERE tg_id=%s", (tg_id,))
+    result = cur.fetchone()
+    cur.close()
+    release_connection(conn)
+    return result
+
+
+def get_buyer_orders(buyer_tg: int):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT 
+                o.id AS order_id,
+                o.address,
+                o.status,
+                o.total_amount,
+                o.created_at,
+                o.seller_id,
+                oi.product_id,
+                oi.product_name,
+                oi.price,
+                oi.quantity,
+                oi.total_price
+            FROM orders o
+            JOIN order_items oi ON o.id = oi.order_id
+            WHERE o.buyer_tg = %s
+            ORDER BY o.id DESC
+        """, (buyer_tg,))
+        return cur.fetchall()
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def update_buyer_name(tg_id, new_name):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE buyers SET shop_name=%s WHERE tg_id=%s",
+        (new_name, tg_id)
+    )
+    conn.commit()
+    cur.close()
+    release_connection(conn)
+
+
+def update_buyer_address(tg_id, new_address):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE buyers SET address=%s WHERE tg_id=%s",
+        (new_address, tg_id)
+    )
+    conn.commit()
+    cur.close()
+    release_connection(conn)
 
 
 # ----------------- КАТЕГОРИИ -----------------
@@ -379,34 +502,6 @@ def update_product_field(pid: int, field: str, value):
         release_connection(conn)
 
 
-def decrease_stock(product_id, amount):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "UPDATE products SET stock = stock - %s WHERE id = %s",
-        (amount, product_id)
-    )
-    conn.commit()
-
-    cursor.execute(
-        "SELECT stock, seller_id, name FROM products WHERE id = %s",
-        (product_id,)
-    )
-
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        return {
-            "stock": int(result[0]),
-            "seller_id": result[1],
-            "name": result[2]
-        }
-
-    return None
-
-
 def search_products_by_name(shop_id, query):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=extras.RealDictCursor)
@@ -427,41 +522,117 @@ def search_products_by_name(shop_id, query):
 
 # ----------------- ЗАКАЗЫ -----------------
 
-def create_order(buyer_tg, seller_id, product_id, amount, address):
-    conn = get_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO orders
-        (buyer_tg, seller_id, product_id, amount, address, status)
-        VALUES (%s, %s, %s, %s, %s, 'new')
-        RETURNING id
-    """, (buyer_tg, seller_id, product_id, amount, address))
-
-    order_id = cur.fetchone()[0]
-
-    conn.commit()
-    cur.close()
-    release_connection(conn)
-
-    return order_id
-
-
-def get_order(order_id):
+def create_order_full(buyer_tg, seller_id, cart, address):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=extras.RealDictCursor)
 
     try:
-        cur.execute(
-            "SELECT * FROM orders WHERE id=%s",
-            (order_id,)
-        )
+        total_sum = 0
+        products_data = {} 
 
-        result = cur.fetchone()
-        return result
+        product_ids = [item["product_id"] for item in cart]
+        cur.execute(
+            "SELECT id, name, price, amount FROM products WHERE id = ANY(%s)",
+            (product_ids,)
+        )
+        for p in cur.fetchall():
+            products_data[p["id"]] = p
+
+        for item in cart:
+            product = products_data.get(item["product_id"])
+            if not product:
+                continue
+            total_sum += float(product["price"]) * float(item["amount"])
+
+        cur.execute("""
+            INSERT INTO orders (buyer_tg, seller_id, address, total_amount)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """, (buyer_tg, seller_id, address, total_sum))
+        order_id = cur.fetchone()["id"]
+
+        for item in cart:
+            product = products_data.get(item["product_id"])
+            if not product:
+                continue
+
+            quantity = float(item["amount"])
+            price = float(product["price"])
+            total_price = quantity * price
+            amount = product["amount"]
+
+            cur.execute("""
+                INSERT INTO order_items
+                (order_id, product_id, product_name, price, quantity, total_price, amount)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                order_id,
+                product["id"],
+                product["name"],
+                price,
+                quantity,
+                total_price,
+                amount
+            ))
+
+        conn.commit()
+        return order_id
 
     except Exception as e:
-        logging.error(f"❌ get_order: {e}")
+        conn.rollback()
+        logging.error(f"❌ create_order_full: {e}")
+        return None
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def accept_order_atomic(order_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    try:
+        cur.execute("SELECT * FROM orders WHERE id=%s FOR UPDATE", (order_id,))
+        order = cur.fetchone()
+
+        if not order or order["status"] != "new":
+            return None
+
+        cur.execute("SELECT * FROM order_items WHERE order_id=%s", (order_id,))
+        items = cur.fetchall()
+
+        for item in items:
+            cur.execute("SELECT stock FROM products WHERE id=%s FOR UPDATE", (item["product_id"],))
+            stock = cur.fetchone()["stock"]
+            if stock < item["quantity"]:
+                conn.rollback()
+                return "not_enough_stock"
+
+        for item in items:
+            cur.execute("UPDATE products SET stock = stock - %s WHERE id=%s", (item["quantity"], item["product_id"]))
+
+        cur.execute("UPDATE orders SET status='принятый' WHERE id=%s", (order_id,))
+
+        cur.execute("SELECT shop_name, address FROM buyers WHERE tg_id=%s", (order["buyer_tg"],))
+        buyer = cur.fetchone()
+
+        cur.execute("SELECT shop_name FROM sellers WHERE id=%s", (order["seller_id"],))
+        seller = cur.fetchone()
+
+        conn.commit()
+
+        return {
+            **order,    
+            "buyer_shop": buyer["shop_name"] if buyer else str(order["buyer_tg"]),
+            "buyer_address": buyer["address"] if buyer else order["address"],
+            "seller_shop": seller["shop_name"] if seller else str(order["seller_id"]),
+            "items": items
+        }
+
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"❌ accept_order_atomic: {e}")
         return None
 
     finally:
@@ -475,56 +646,40 @@ def get_seller_orders(seller_id):
 
     try:
         cur.execute("""
-            SELECT o.id, p.name, o.amount, o.status
+            SELECT 
+                o.id AS order_id,
+                o.address,
+                o.status,
+                o.total_amount,
+                oi.product_id,
+                oi.product_name,
+                oi.price,
+                oi.quantity,
+                oi.total_price
             FROM orders o
-            JOIN products p ON o.product_id = p.id
-            WHERE o.seller_id=%s
+            JOIN order_items oi ON o.id = oi.order_id
+            WHERE o.seller_id = %s
             ORDER BY o.id DESC
         """, (seller_id,))
-
         result = cur.fetchall()
         return result
 
-    except Exception as e:
-        logging.error(f"❌ get_seller_orders: {e}")
-        return []
-
     finally:
         cur.close()
         release_connection(conn)
 
 
-def get_buyer_by_order(order_id):
+def get_order_items(order_id):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-    try:
-        cur.execute(
-            "SELECT buyer_tg FROM orders WHERE id=%s",
-            (order_id,)
-        )
-
-        result = cur.fetchone()
-        return result
-
-    except Exception as e:
-        logging.error(f"❌ get_buyer_by_order: {e}")
-        return None
-
-    finally:
-        cur.close()
-        release_connection(conn)
-
-
-def update_order_status(order_id, status):
-    conn = get_connection()
-    cur = conn.cursor()
-
     cur.execute(
-        "UPDATE orders SET status=%s WHERE id=%s",
-        (status, order_id)
+        "SELECT * FROM order_items WHERE order_id=%s",
+        (order_id,)
     )
 
-    conn.commit()
+    result = cur.fetchall()
+
     cur.close()
     release_connection(conn)
+    return result

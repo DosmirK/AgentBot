@@ -16,108 +16,56 @@ router = Router()
 async def order_accept(call: CallbackQuery):
 
     try:
-        ids_part = call.data.split("_")[2]
-        order_ids = [int(x) for x in ids_part.split(",")]
+        order_id = int(call.data.split("_")[2])
     except:
         await call.answer("❌ Ошибка ID заказа")
         return
 
-    total_text = "📦 Состав заказа:\n\n"
-    buyer_id = None
-    seller_id = None
-    address = None
-    total_sum = 0
+    result = accept_order_atomic(order_id)
 
-    for order_id in order_ids:
-
-        order = get_order(order_id)
-        if not order:
-            continue
-
-        if order["status"] != "new":
-            await call.answer("⚠️ Заказ уже обработан")
-            return
-
-        buyer_id = order["buyer_tg"]
-        seller_id = order["seller_id"]
-        product_id = order["product_id"]
-        amount = int(order["amount"])
-        address = order["address"]
-
-        product = get_product(product_id)
-        if not product:
-            continue
-
-        current_stock = int(product["stock"])
-        if current_stock < amount:
-            await call.bot.send_message(
-                buyer_id,
-                f"❌ Недостаточно товара:\n"
-                f"{product['name']}\n\n"
-                f"Доступно: {current_stock} шт"
-            )
-
-            update_order_status(order_id, "declined")
-            continue
-
-        price = float(product["price"])
-        cost = price * amount
-        total_sum += cost
-
-        updated = decrease_stock(product_id, amount)
-
-        if updated:
-            new_stock = int(updated["stock"])
-            product_name = updated["name"]
-
-            if new_stock <= 5:
-                warning_text = (
-                    f"⚠️ Товар заканчивается!\n\n"
-                    f"📦 {product_name}\n"
-                    f"📊 Остаток: {new_stock} шт"
-                )
-
-                await call.bot.send_message(
-                    seller_id,  
-                    warning_text
-                )
-
-        update_order_status(order_id, "accepted")
-
-        total_text += (
-            f"📦 {product['name']}\n"
-            f"🔢 {amount} × {price} = {cost} сом\n\n"
-        )
-
-    if total_sum == 0:
-        await call.answer("❌ Заказ не может быть обработан")
+    if result == "not_enough_stock":
+        await call.answer("❌ Недостаточно товара")
         return
 
-    total_text += f"💵 Итого: {total_sum} сом\n"
-    total_text += f"📍 Адрес: {address}\n"
+    if not result:
+        await call.answer("⚠️ Заказ уже обработан")
+        return
 
-    # ------------------ ПОКУПАТЕЛЬ ------------------
+    items = get_order_items(order_id)
 
-    if buyer_id:
-        await call.bot.send_message(
-            buyer_id,
-            "✅ Ваш заказ принят продавцом\n\n" + total_text
+    total_text = "📦 Состав заказа:\n\n"
+    total_sum = 0
+
+    for item in items:
+        total_sum += float(item["total_price"])
+
+        total_text += (
+            f"📦 {item['product_name']}\n"
+            f"📦 Фасовка: {item['amount']}\n"
+            f"🔢 {item['quantity']} × {item['price']} = {item['total_price']} сом\n\n"
         )
 
-    # ------------------ АДМИН ------------------
+    total_text += f"💵 Итого: {result['total_amount']} сом\n"
+    total_text += f"📍 Адрес: {result['address']}\n"
 
-    if seller_id:
-        admin_text = (
-            f"📝 Заказ принят продавцом\n\n"
-            f"🏪 Продавец: {seller_id}\n"
-            f"👤 Покупатель: {buyer_id}\n\n"
-            + total_text
-        )
+    buyer_id = result["buyer_tg"]
 
-        await call.bot.send_message(
-            ADMIN_ID,
-            admin_text
-        )
+    await call.bot.send_message(
+        buyer_id,
+        "✅ Ваш заказ принят продавцом\n\n" + total_text
+    )
+
+    admin_text = (
+        f"📝 Заказ #{order_id} принят продавцом\n\n"
+        f"🏪 Продавец: {result['seller_shop']}\n"
+        f"👤 Покупатель: {result['buyer_shop']}\n\n"
+        + total_text
+    )
+
+    await call.bot.send_message(
+        ADMIN_ID,
+        admin_text
+    )
 
     await call.message.edit_reply_markup(reply_markup=None)
 
@@ -142,7 +90,6 @@ async def order_decline(call: CallbackQuery, state: FSMContext):
     await state.update_data(order_id=order_id)
 
     await call.message.answer("Причина отказа:")
-
     await state.set_state(DeclineState.reason)
 
     await call.answer()
@@ -152,22 +99,54 @@ async def order_decline(call: CallbackQuery, state: FSMContext):
 async def save_decline(message: Message, state: FSMContext):
 
     data = await state.get_data()
+    order_id = data.get("order_id")
 
-    order_id = data["order_id"]
+    if not order_id:
+        await message.answer("Ошибка заказа")
+        await state.clear()
+        return
 
     reason = message.text.strip()
 
-    update_order_status(order_id, "declined")
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-    buyer = get_buyer_by_order(order_id)
+    try:
+        cur.execute("""
+            SELECT * FROM orders
+            WHERE id=%s
+            FOR UPDATE
+        """, (order_id,))
 
-    if buyer:
+        order = cur.fetchone()
+
+        if not order or order["status"] != "new":
+            await message.answer("Заказ уже обработан")
+            return
+
+        cur.execute("""
+            UPDATE orders
+            SET status='отклоненный'
+            WHERE id=%s
+        """, (order_id,))
+
+        conn.commit()
+
+        buyer_id = order["buyer_tg"]
 
         await message.bot.send_message(
-            buyer[0],
-            f"❌ Ваш заказ #{order_id} отклонён\nПричина: {reason}"
+            buyer_id,
+            f"❌ Ваш заказ #{order_id} отклонён\n\nПричина: {reason}"
         )
 
-    await message.answer("✅ Отказ отправлен")
+        await message.answer("✅ Отказ отправлен")
 
-    await state.clear()
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"❌ decline_order: {e}")
+        await message.answer("Ошибка")
+
+    finally:
+        cur.close()
+        release_connection(conn)
+        await state.clear()

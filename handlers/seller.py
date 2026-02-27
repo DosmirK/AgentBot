@@ -20,7 +20,7 @@ from database import (
     delete_product_by_id,
     update_product_field,
     delete_category,
-    get_product_by_name_and_seller,
+    get_product,
     get_seller_orders
 )
 
@@ -112,7 +112,7 @@ def check_seller(user_id):
 
 # ================= ПРОДАВЕЦ ==========================
 
-@router.message(F.text == "🏪 Продавец")
+@router.message(F.text == "🏪 Фирма")
 async def seller_start(message: Message, state: FSMContext):
 
     await state.clear()
@@ -150,7 +150,7 @@ async def seller_start(message: Message, state: FSMContext):
         return
 
     if not seller["shop_name"]:
-        await message.answer("Введите название магазина:")
+        await message.answer("Введите название фирмы:")
         await state.set_state(SellerRegister.shop_name)
         return
 
@@ -587,7 +587,6 @@ async def delete_category_confirm(call: CallbackQuery):
 # ---------------- ЗАКАЗЫ ----------------
 @router.message(F.text == "📥 Заказы")
 async def seller_orders(message: Message, state: FSMContext):
-
     seller = get_seller(message.from_user.id)
 
     if not seller:
@@ -600,27 +599,39 @@ async def seller_orders(message: Message, state: FSMContext):
         await message.answer("❌ Заказов нет.")
         return
 
+    orders_dict = {}
+    for o in orders:
+        oid = o["order_id"]
+        if oid not in orders_dict:
+            orders_dict[oid] = {
+                "status": o["status"],
+                "address": o["address"],
+                "total_amount": o["total_amount"],
+                "items": []
+            }
+        orders_dict[oid]["items"].append(o)
+
     text = "📥 Заказы:\n\n"
 
-    for o in orders:
-        order_id = o["id"]
-        product_name = o["name"]
-        status = o["status"]
+    for order_id, data in orders_dict.items():
+        text += f"🆔 Заказ #{order_id}\n"
+        text += f"📍 Адрес: {data['address']}\n"
+        text += f"💵 Итого: {data['total_amount']} сом\n"
+        text += f"📌 Статус: {data['status']}\n"
+        text += "📦 Товары:\n"
 
-        try:
-            amount = int(float(o["amount"]))
-        except (TypeError, ValueError):
-            amount = 0
+        for item in data["items"]:
+            product = get_product(item["product_id"])
+            packaging = product["amount"] if product else "Не указано"
 
-        product = get_product_by_name_and_seller(product_name, seller["id"])
-        packaging = product["amount"] if product else "Не указано"
+            text += (
+                f"  • {item['product_name']}\n"
+                f"    Фасовка: {packaging}\n"
+                f"    Кол-во: {item['quantity']} шт\n"
+                f"    Цена за ед.: {item['price']} сом\n"
+                f"    Сумма: {item['total_price']} сом\n"
+            )
 
-        text += (
-            f"🆔 Заказ #{order_id}\n"
-            f"📦 Товар: {product_name}\n"
-            f"📊 Фасовка: {packaging}\n"
-            f"🔢 Кол-во: {amount}\n"
-            f"📌 Статус: {status}\n\n"
-        )
+        text += "\n"
 
     await message.answer(text)

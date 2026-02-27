@@ -1,27 +1,27 @@
 import logging
+import os
 from psycopg2 import pool, extras
 
 # ----------------- НАСТРОЙКИ -----------------
-
-DB_CONFIG = {
-    "dbname": "shop",
-    "user": "postgres",
-    "password": "dos002016",
-    "host": "localhost",
-    "port": "5432"
-}
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-connection_pool = pool.SimpleConnectionPool(1, 20, **DB_CONFIG)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
+if not DATABASE_URL:
+    raise RuntimeError("❌ DATABASE_URL не задана. Проверь переменные окружения.")
+
+connection_pool = pool.SimpleConnectionPool(
+    1,
+    20,
+    DATABASE_URL
+)
 
 def get_connection():
     return connection_pool.getconn()
-
 
 def release_connection(conn):
     connection_pool.putconn(conn)

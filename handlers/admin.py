@@ -157,8 +157,10 @@ async def admin_buyers(message: Message):
     text = "🛒 Покупатели:\n\n"
 
     for b in buyers:
-        uid = b["buyer_id"]
-
-        text += f"👤 —\n🆔 {uid}\n\n"
+        text += (
+            f"👤 {b['shop_name']}\n"
+            f"🆔 {b['tg_id']}\n"
+            f"📍 {b['address']}\n\n"
+        )
 
     await message.answer(text)

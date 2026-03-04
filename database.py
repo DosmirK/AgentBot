@@ -179,10 +179,11 @@ def get_all_buyers():
     cur = conn.cursor(cursor_factory=extras.RealDictCursor)
 
     try:
-        cur.execute("SELECT DISTINCT buyer_tg FROM orders")
-        result = cur.fetchall()
-        return result
-
+        cur.execute("""
+            SELECT tg_id, shop_name, address
+            FROM buyers
+        """)
+        return cur.fetchall()
     finally:
         cur.close()
         release_connection(conn)

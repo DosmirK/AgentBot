@@ -134,6 +134,35 @@ def delete_seller_full(tg_id):
         release_connection(conn)
 
 
+def restore_seller(tg_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            UPDATE sellers
+            SET is_active = 1
+            WHERE tg_id = %s
+        """, (tg_id,))
+
+        updated = cur.rowcount
+        conn.commit()
+
+        if updated == 0:
+            return False
+
+        return True
+
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"❌ restore_seller: {e}")
+        return False
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
 # ----------------- ПРОДАВЦЫ -----------------
 
 def add_seller(tg_id):

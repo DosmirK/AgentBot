@@ -13,7 +13,8 @@ from database import (
     deactivate_seller,
     get_all_sellers,
     get_all_buyers,
-    delete_seller_full
+    delete_seller_full,
+    restore_seller
 )
 
 
@@ -139,6 +140,34 @@ async def delete_seller_command(message: Message):
     except:
         pass
 
+
+@router.message(Command("restore_seller"))
+async def restore_seller_command(message: Message):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    try:
+        tg_id = int(message.text.split()[1])
+    except:
+        await message.answer("Пример: /restore_seller 123456789")
+        return
+
+    success = restore_seller(tg_id)
+
+    if not success:
+        await message.answer("❌ Фирма не найдена или ошибка")
+        return
+
+    await message.answer("✅ Фирма восстановлена")
+
+    try:
+        await message.bot.send_message(
+            tg_id,
+            "✅ Ваша фирма была восстановлена администратором"
+        )
+    except:
+        pass
 
 # ---------------- BUYERS ----------------
 

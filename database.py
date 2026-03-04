@@ -109,12 +109,25 @@ def delete_seller_full(tg_id):
     cur = conn.cursor()
 
     try:
-        cur.execute("DELETE FROM sellers WHERE tg_id=%s", (tg_id,))
+        cur.execute(
+            "DELETE FROM sellers WHERE tg_id=%s",
+            (tg_id,)
+        )
+
+        deleted = cur.rowcount  # 👈 сколько строк удалено
+
         conn.commit()
+
+        if deleted == 0:
+            return False  # ничего не нашли
+
         return True
+
     except Exception as e:
         conn.rollback()
+        logging.error(f"❌ delete_seller_full: {e}")
         return False
+
     finally:
         cur.close()
         release_connection(conn)

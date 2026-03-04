@@ -109,17 +109,18 @@ def delete_seller_full(tg_id):
     cur = conn.cursor()
 
     try:
-        cur.execute(
-            "DELETE FROM sellers WHERE tg_id=%s",
-            (tg_id,)
-        )
+        cur.execute("""
+            UPDATE sellers
+            SET is_active = 0
+            WHERE tg_id = %s
+        """, (tg_id,))
 
-        deleted = cur.rowcount  # 👈 сколько строк удалено
+        updated = cur.rowcount
 
         conn.commit()
 
-        if deleted == 0:
-            return False  # ничего не нашли
+        if updated == 0:
+            return False
 
         return True
 

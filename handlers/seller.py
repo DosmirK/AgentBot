@@ -6,8 +6,12 @@ from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID
 
-from keyboards import seller_menu, edit_fields_kb
-from states import SellerRegister, AddProduct, DeleteProduct, EditProduct
+from keyboards import (
+    seller_menu, edit_fields_kb, week_days_kb, district_kb, seller_schedule_districts_kb, 
+    delivery_day_kb, prepayment_edit_kb, prepayment_setup_kb)
+
+from data import DISTRICTS, WEEK_DAYS
+from states import SellerRegister, AddProduct, DeleteProduct, EditProduct, SellerSchedule, SellerPrepayment
 
 from database import (
     get_seller,
@@ -21,7 +25,13 @@ from database import (
     update_product_field,
     delete_category,
     get_product,
-    get_seller_orders
+    get_seller_orders,
+    save_seller_schedule,
+    get_seller_schedule,
+    delete_seller_schedule,
+    get_seller_prepayment,
+    save_seller_prepayment,
+    delete_seller_prepayment
 )
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -169,9 +179,607 @@ async def save_shop_name(message: Message, state: FSMContext):
 
     set_shop_name(message.from_user.id, name)
 
-    await message.answer("✅ Магазин сохранён", reply_markup=seller_menu())
+    await message.answer(
+        "Выберите район для настройки графика:",
+        reply_markup=district_kb()
+    )
+
+    await state.set_state(SellerRegister.schedule_district)
+
+
+@router.message(SellerRegister.schedule_district)
+async def seller_choose_district(message: Message, state: FSMContext):
+
+    district = message.text.strip()
+
+    if district not in DISTRICTS:
+        await message.answer(
+            "❌ Выберите район кнопкой",
+            reply_markup=district_kb()
+        )
+        return
+
+    await state.update_data(
+        district=district,
+        order_days=[]
+    )
+
+    await message.answer(
+        "Выберите дни приёма заказов.\n"
+        "После выбора нажмите ✅ Готово",
+        reply_markup=week_days_kb()
+    )
+
+    await state.set_state(SellerRegister.schedule_order_days)
+
+
+@router.message(SellerRegister.schedule_order_days)
+async def seller_choose_order_days(message: Message, state: FSMContext):
+
+    text = message.text.strip().lower()
+
+    data = await state.get_data()
+
+    order_days = data.get("order_days", [])
+
+    # ---------------- ГОТОВО ----------------
+
+    if text == "✅ готово".lower():
+
+        if not order_days:
+            await message.answer(
+                "❌ Выберите хотя бы один день"
+            )
+            return
+
+        await message.answer(
+            "Выберите день доставки:",
+            reply_markup=delivery_day_kb()
+        )
+
+        await state.set_state(
+            SellerRegister.schedule_delivery_day
+        )
+
+        return
+
+    # ---------------- ПРОВЕРКА ДНЯ ----------------
+
+    if text not in WEEK_DAYS:
+
+        await message.answer(
+            "❌ Выберите день кнопкой",
+            reply_markup=delivery_day_kb()
+        )
+
+        return
+
+    # ---------------- ЗАЩИТА ОТ ДУБЛЕЙ ----------------
+
+    if text in order_days:
+
+        await message.answer(
+            f"⚠️ День '{text}' уже добавлен"
+        )
+
+        return
+
+    # ---------------- СОХРАНЯЕМ ----------------
+
+    order_days.append(text)
+
+    await state.update_data(
+        order_days=order_days
+    )
+
+    await message.answer(
+        f"✅ Добавлено: {text}\n\n"
+        f"Выбрано дней: {len(order_days)}"
+    )
+
+
+@router.message(SellerRegister.schedule_delivery_day)
+async def seller_choose_delivery_day(message: Message, state: FSMContext):
+
+    delivery_day = message.text.strip().lower()
+
+    if delivery_day not in WEEK_DAYS:
+
+        await message.answer(
+            "❌ Выберите день кнопкой",
+            reply_markup=delivery_day_kb()
+        )
+
+        return
+
+    data = await state.get_data()
+
+    district = data.get("district")
+    order_days = data.get("order_days", [])
+
+    seller = get_seller(message.from_user.id)
+
+    if not seller:
+
+        await message.answer("❌ Продавец не найден")
+
+        await state.clear()
+
+        return
+
+    seller_id = seller["id"]
+
+    # ---------------- СОХРАНЯЕМ В БАЗУ ----------------
+
+    save_seller_schedule(
+        seller_id=seller_id,
+        district=district,
+        order_days=order_days,
+        delivery_day=delivery_day
+    )
+
+    # ---------------- ЗАВЕРШЕНИЕ ----------------
+
+    await message.answer(
+        "✅ График сохранён\n\n"
+        "Регистрация завершена",
+        reply_markup=seller_menu()
+    )
 
     await state.clear()
+
+# ================= ГРАФИК ============================
+
+@router.message(F.text == "📅 График")
+async def seller_schedule_menu(message: Message):
+
+    await message.answer(
+        "Выберите район:",
+        reply_markup=seller_schedule_districts_kb()
+    )
+
+
+@router.callback_query(F.data.startswith("schedule_"))
+async def show_schedule(call: CallbackQuery):
+
+    district = call.data.replace("schedule_", "")
+
+    seller = get_seller(call.from_user.id)
+
+    schedule = get_seller_schedule(
+        seller["id"],
+        district
+    )
+
+    if not schedule:
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="➕ Настроить",
+                        callback_data=f"setup_schedule_{district}"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена",
+                        callback_data="close_schedule"
+                    )
+                ]
+            ]
+        )
+
+        await call.message.answer(
+            f"⚠️ Район {district} ещё не настроен",
+            reply_markup=kb
+        )
+
+        await call.answer()
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Редактировать",
+                    callback_data=f"edit_schedule_{district}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="close_schedule"
+                )
+            ]
+        ]
+    )
+
+    await call.message.answer(
+        f"📍 Район: {district}\n\n"
+        f"📥 Дни приёма:\n{schedule['order_days']}\n\n"
+        f"🚚 День доставки:\n{schedule['delivery_day']}",
+        reply_markup=kb
+    )
+
+    await call.answer()
+
+
+@router.callback_query(F.data == "close_schedule")
+async def close_schedule(call: CallbackQuery):
+
+    await call.message.delete()
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("setup_schedule_"))
+async def setup_schedule(call: CallbackQuery, state: FSMContext):
+
+    district = call.data.replace(
+        "setup_schedule_",
+        ""
+    )
+
+    await state.update_data(
+        district=district,
+        order_days=[]
+    )
+
+    await state.set_state(
+        SellerSchedule.order_days
+    )
+
+    await call.message.answer(
+        f"📍 Район: {district}\n\n"
+        "Выберите дни приёма заявок.\n"
+        "После выбора нажмите ✅ Готово",
+        reply_markup=week_days_kb()
+    )
+
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("edit_schedule_"))
+async def edit_schedule(call: CallbackQuery, state: FSMContext):
+
+    district = call.data.replace(
+        "edit_schedule_",
+        ""
+    )
+
+    seller = get_seller(call.from_user.id)
+
+    delete_seller_schedule(
+        seller["id"],
+        district
+    )
+
+    await state.update_data(
+        district=district,
+        order_days=[]
+    )
+
+    await state.set_state(
+        SellerSchedule.order_days
+    )
+
+    await call.message.answer(
+        f"✏️ Редактирование района: {district}\n\n"
+        "Выберите дни приёма заявок",
+        reply_markup=week_days_kb()
+    )
+
+    await call.answer()
+
+
+@router.message(SellerSchedule.order_days)
+async def seller_choose_order_days(message: Message, state: FSMContext):
+
+    text = message.text.strip().lower()
+
+    data = await state.get_data()
+
+    order_days = data.get("order_days", [])
+
+    # ---------------- ГОТОВО ----------------
+
+    if text == "✅ готово".lower():
+
+        if not order_days:
+            await message.answer(
+                "❌ Выберите хотя бы один день"
+            )
+            return
+
+        await message.answer(
+            "Выберите день доставки:",
+            reply_markup=delivery_day_kb()
+        )
+
+        await state.set_state(
+            SellerSchedule.delivery_day
+        )
+
+        return
+
+    # ---------------- ПРОВЕРКА ДНЯ ----------------
+
+    if text not in WEEK_DAYS:
+
+        await message.answer(
+            "❌ Выберите день кнопкой",
+            reply_markup=delivery_day_kb()
+        )
+
+        return
+
+    # ---------------- ЗАЩИТА ОТ ДУБЛЕЙ ----------------
+
+    if text in order_days:
+
+        await message.answer(
+            f"⚠️ День '{text}' уже добавлен"
+        )
+
+        return
+
+    # ---------------- СОХРАНЯЕМ ----------------
+
+    order_days.append(text)
+
+    await state.update_data(
+        order_days=order_days
+    )
+
+    await message.answer(
+        f"✅ Добавлено: {text}\n\n"
+        f"Выбрано дней: {len(order_days)}"
+    )
+
+@router.message(SellerSchedule.delivery_day)
+async def seller_choose_delivery_day(message: Message, state: FSMContext):
+
+    delivery_day = message.text.strip().lower()
+
+    if delivery_day not in WEEK_DAYS:
+
+        await message.answer(
+            "❌ Выберите день кнопкой",
+            reply_markup=delivery_day_kb()
+        )
+
+        return
+
+    data = await state.get_data()
+
+    district = data.get("district")
+    order_days = data.get("order_days", [])
+
+    seller = get_seller(message.from_user.id)
+
+    if not seller:
+
+        await message.answer("❌ Продавец не найден")
+
+        await state.clear()
+
+        return
+
+    seller_id = seller["id"]
+
+    # ---------------- СОХРАНЯЕМ В БАЗУ ----------------
+
+    save_seller_schedule(
+        seller_id=seller_id,
+        district=district,
+        order_days=order_days,
+        delivery_day=delivery_day
+    )
+
+    # ---------------- ЗАВЕРШЕНИЕ ----------------
+
+    await message.answer(
+        "✅ График сохранён",
+        reply_markup=seller_menu()
+    )
+
+    await state.clear()
+
+# ================= ПРЕДОПЛАТА ========================
+
+@router.message(F.text == "💰 Предоплата")
+async def seller_prepayment_menu(message: Message):
+
+    seller = get_seller(message.from_user.id)
+
+    prepayment = get_seller_prepayment(
+        seller["id"]
+    )
+
+    if not prepayment:
+
+        await message.answer(
+            "💰 Предоплата не настроена.\n\n"
+            "Сейчас магазины могут "
+            "оформлять заказы без предоплаты.",
+            reply_markup=prepayment_setup_kb()
+        )
+
+        return
+
+    if prepayment["qr_photo"]:
+
+        await message.answer_photo(
+        photo=prepayment["qr_photo"],
+        caption=(
+            f"💰 Предоплата\n\n"
+            f"Сумма: {prepayment['amount']} сом\n\n"
+            f"Реквизиты:\n{prepayment['payment_details']}"
+        ),
+        reply_markup=prepayment_edit_kb()
+        )
+
+    else:
+
+        await message.answer(
+        f"💰 Предоплата\n\n"
+        f"Сумма: {prepayment['amount']} сом\n\n"
+        f"Реквизиты:\n{prepayment['payment_details']}",
+        reply_markup=prepayment_edit_kb()
+        )
+
+
+@router.callback_query(F.data == "close_prepayment")
+async def close_prepayment(call: CallbackQuery):
+
+    await call.message.delete()
+
+    await call.answer()
+
+
+@router.callback_query(F.data == "setup_prepayment")
+@router.callback_query(F.data == "edit_prepayment")
+async def setup_prepayment(
+    call: CallbackQuery,
+    state: FSMContext
+):
+
+    await state.set_state(
+        SellerPrepayment.amount
+    )
+
+    await call.message.answer(
+        "Введите сумму предоплаты:"
+    )
+
+    await call.answer()
+
+
+@router.message(SellerPrepayment.amount)
+async def prepayment_amount(
+    message: Message,
+    state: FSMContext
+):
+
+    try:
+        amount = int(message.text)
+    except:
+        await message.answer(
+            "Введите число"
+        )
+        return
+
+    if amount <= 0:
+        await message.answer(
+            "Сумма должна быть больше 0"
+        )
+        return
+
+    await state.update_data(
+        amount=amount
+    )
+
+    await state.set_state(
+        SellerPrepayment.details
+    )
+
+    await message.answer(
+    "Введите реквизиты в формате:\n"
+    "(Банк): (Реквизит)\n\n"
+    "Пример:\n"
+    "Мбанк: 996500000000"
+    )
+
+
+@router.message(SellerPrepayment.details)
+async def prepayment_details(
+    message: Message,
+    state: FSMContext
+):
+
+    details = message.text.strip()
+
+    if len(details) < 5:
+
+        await message.answer(
+            "Слишком короткие реквизиты"
+        )
+
+        return
+
+    data = await state.get_data()
+
+    await state.update_data(
+    details=details
+    )
+
+    await state.set_state(
+    SellerPrepayment.qr
+    )
+
+    await message.answer(
+    "Отправьте QR-код для оплаты.\n\n"
+    "Или напишите 'пропустить'"
+    )
+
+
+@router.message(SellerPrepayment.qr)
+async def prepayment_qr(
+    message: Message,
+    state: FSMContext
+):
+    data = await state.get_data()
+
+    seller = get_seller(
+        message.from_user.id
+    )
+
+    qr_photo = None
+
+    if message.photo:
+
+        qr_photo = message.photo[-1].file_id
+
+    elif message.text.lower() != "пропустить":
+
+        await message.answer(
+            "Отправьте QR-код или напишите 'пропустить'"
+        )
+        return
+
+    save_seller_prepayment(
+        seller["id"],
+        data["amount"],
+        data["details"],
+        qr_photo
+    )
+
+    await message.answer(
+        "✅ Предоплата сохранена",
+        reply_markup=seller_menu()
+    )
+
+    await state.clear()
+
+
+@router.callback_query(F.data == "delete_prepayment")
+async def delete_prepayment_handler(
+    call: CallbackQuery
+):
+
+    seller = get_seller(
+        call.from_user.id
+    )
+
+    delete_seller_prepayment(
+        seller["id"]
+    )
+
+    await call.message.answer(
+        "✅ Предоплата отключена"
+    )
+
+    await call.answer()
 
 # ================= ДОБАВЛЕНИЕ ========================
 

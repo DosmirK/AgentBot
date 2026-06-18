@@ -2,6 +2,18 @@ from aiogram.fsm.state import State, StatesGroup
 
 class SellerRegister(StatesGroup):
     shop_name = State()
+    schedule_district = State()
+    schedule_order_days = State()
+    schedule_delivery_day = State()
+
+class SellerSchedule(StatesGroup):
+    order_days = State()
+    delivery_day = State()
+
+class SellerPrepayment(StatesGroup):
+    amount = State()
+    details = State()
+    qr = State()
 
 class AddProduct(StatesGroup):
 
@@ -25,12 +37,16 @@ class DeclineState(StatesGroup):
 
 class BuyerState(StatesGroup):
     register_name = State()    
+    register_district = State()
     register_address = State()  
+    register_phone = State()
     search = State() 
 
 class ProfileEdit(StatesGroup):
     waiting_for_name = State()
     waiting_for_address = State()
+    waiting_for_district = State()
+    waiting_for_phone = State()
 
 class DeleteProduct(StatesGroup):
     category = State()
@@ -42,3 +58,6 @@ class EditProduct(StatesGroup):
     product = State()
     field = State()
     value = State()
+
+class OrdersView(StatesGroup):
+    page = State()

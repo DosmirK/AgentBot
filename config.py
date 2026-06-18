@@ -1,4 +1,4 @@
 import os
 
-TOKEN = os.environ.get("TOKEN")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+TOKEN = "8198415376:AAEvfu56URAaBhFQGKq-agW6Hk7760AC-Uw"
+ADMIN_ID = 1380467292

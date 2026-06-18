@@ -2,6 +2,8 @@ import logging
 import os
 from psycopg2 import pool, extras
 
+from dotenv import load_dotenv
+
 # ----------------- НАСТРОЙКИ -----------------
 
 logging.basicConfig(
@@ -9,15 +11,26 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+import logging
+from psycopg2 import pool, extras
 
-if not DATABASE_URL:
-    raise RuntimeError("❌ DATABASE_URL не задана. Проверь переменные окружения.")
+DB_CONFIG = {
+    "dbname": "shop",
+    "user": "postgres",
+    "password": "dos002016",
+    "host": "localhost",
+    "port": "5432"
+}
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
 
 connection_pool = pool.SimpleConnectionPool(
     1,
     20,
-    DATABASE_URL
+    **DB_CONFIG
 )
 
 def get_connection():
@@ -43,13 +56,52 @@ def create_tables():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS seller_schedules (
+    id SERIAL PRIMARY KEY,
+    seller_id INTEGER REFERENCES sellers(id) ON DELETE CASCADE,
+    district TEXT,
+    order_days TEXT,
+    delivery_day TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS seller_prepayments (
+    id SERIAL PRIMARY KEY,
+    seller_id INTEGER UNIQUE REFERENCES sellers(id) ON DELETE CASCADE,
+    amount NUMERIC,
+    payment_details TEXT,
+    qr_photo TEXT     
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS buyers (
         id SERIAL PRIMARY KEY,
         tg_id BIGINT UNIQUE,
         shop_name TEXT,
-        address TEXT
+        address TEXT,
+        district TEXT,
+        phone TEXT
     )
     """)
+
+    try:
+        cur.execute("""
+            ALTER TABLE buyers
+            ADD COLUMN IF NOT EXISTS district TEXT
+        """)
+    except Exception as e:
+        logging.error(f"❌ district alter: {e}")
+
+    try:
+        cur.execute("""
+            ALTER TABLE buyers
+            ADD COLUMN IF NOT EXISTS phone TEXT
+        """)
+    except Exception as e:
+        logging.error(f"❌ phone alter: {e}")
+
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS categories (
@@ -69,7 +121,8 @@ def create_tables():
         amount TEXT,
         price NUMERIC,
         stock INTEGER,
-        image TEXT
+        image TEXT,
+        is_active BOOLEAN DEFAULT TRUE
     )
     """)
 
@@ -291,24 +344,266 @@ def get_all_shops():
     release_connection(conn)
     return result
 
-# ----------------- ПОКУПАТЕЛИ -----------------
 
-def add_buyer(tg_id: int, shop_name: str, address: str):
+def save_seller_schedule(
+    seller_id,
+    district,
+    order_days,
+    delivery_day
+):
     conn = get_connection()
     cur = conn.cursor()
+
     try:
         cur.execute("""
-            INSERT INTO buyers (tg_id, shop_name, address)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (tg_id) DO UPDATE
-            SET shop_name = EXCLUDED.shop_name,
-                address = EXCLUDED.address
-        """, (tg_id, shop_name, address))
+            INSERT INTO seller_schedules
+            (seller_id, district, order_days, delivery_day)
+            VALUES (%s, %s, %s, %s)
+        """, (
+            seller_id,
+            district,
+            ",".join(order_days),
+            delivery_day
+        ))
+
         conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"❌ save_seller_schedule: {e}")
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def get_seller_schedule(seller_id, district):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT *
+            FROM seller_schedules
+            WHERE seller_id = %s
+            AND district = %s
+        """, (seller_id, district))
+
+        return cur.fetchone()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def delete_seller_schedule(
+    seller_id,
+    district
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            DELETE FROM seller_schedules
+            WHERE seller_id = %s
+            AND district = %s
+        """, (
+            seller_id,
+            district
+        ))
+
+        conn.commit()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def get_schedule_by_district(seller_id, district):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    cur.execute("""
+        SELECT *
+        FROM seller_schedules
+        WHERE seller_id=%s
+        AND district=%s
+    """, (seller_id, district))
+
+    result = cur.fetchone()
+
+    cur.close()
+    release_connection(conn)
+
+    return result
+
+
+def get_seller_prepayment(seller_id):
+    conn = get_connection()
+    cur = conn.cursor(
+        cursor_factory=extras.RealDictCursor
+    )
+
+    try:
+        cur.execute("""
+            SELECT *
+            FROM seller_prepayments
+            WHERE seller_id = %s
+        """, (seller_id,))
+
+        return cur.fetchone()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def save_seller_prepayment(
+        seller_id,
+        amount,
+        payment_details,
+        qr_photo=None
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            INSERT INTO seller_prepayments
+            (
+                seller_id,
+                amount,
+                payment_details,
+                qr_photo
+            )
+            VALUES (%s, %s, %s, %s)
+
+            ON CONFLICT (seller_id)
+            DO UPDATE SET
+                amount = EXCLUDED.amount,
+                payment_details = EXCLUDED.payment_details,
+                qr_photo = EXCLUDED.qr_photo
+        """, (
+            seller_id,
+            amount,
+            payment_details,
+            qr_photo
+        ))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        logging.error(
+            f"❌ save_seller_prepayment: {e}"
+        )
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def delete_seller_prepayment(seller_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            DELETE FROM seller_prepayments
+            WHERE seller_id = %s
+        """, (seller_id,))
+
+        conn.commit()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+# ----------------- ПОКУПАТЕЛИ -----------------
+
+
+def add_buyer(tg_id, shop_name, address, district, phone):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            INSERT INTO buyers (
+                tg_id,
+                shop_name,
+                address,
+                district,
+                phone
+            )
+            VALUES (%s, %s, %s, %s, %s)
+
+            ON CONFLICT (tg_id) DO UPDATE
+            SET
+                shop_name = EXCLUDED.shop_name,
+                address = EXCLUDED.address,
+                district = EXCLUDED.district,
+                phone = EXCLUDED.phone
+        """, (
+            tg_id,
+            shop_name,
+            address,
+            district,
+            phone
+        ))
+
+        conn.commit()
+
         return True
+
     except Exception as e:
         logging.error(f"❌ add_buyer: {e}")
+        conn.rollback()
+
         return False
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def update_buyer_district(tg_id, district):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            UPDATE buyers
+            SET district = %s
+            WHERE tg_id = %s
+        """, (district, tg_id))
+
+        conn.commit()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+
+def update_buyer_phone(
+    tg_id,
+    phone
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            UPDATE buyers
+            SET phone = %s
+            WHERE tg_id = %s
+        """, (
+            phone,
+            tg_id
+        ))
+
+        conn.commit()
+
     finally:
         cur.close()
         release_connection(conn)
@@ -461,6 +756,7 @@ def get_products_full_by_seller(seller_id):
         SELECT id, name, amount, price, stock, image, category_id
         FROM products
         WHERE seller_id=%s
+        AND is_active = TRUE
         ORDER BY id DESC
     """, (seller_id,))
 
@@ -475,7 +771,12 @@ def get_product(product_id):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-    cur.execute("SELECT * FROM products WHERE id=%s", (product_id,))
+    cur.execute("""
+        SELECT * FROM products
+        WHERE id=%s
+        AND is_active = TRUE
+    """, (product_id,))
+    
     result = cur.fetchone()
 
     cur.close()
@@ -488,7 +789,7 @@ def get_product_by_name_and_seller(name, seller_id):
     cur = conn.cursor(cursor_factory=extras.RealDictCursor)
 
     cur.execute(
-        "SELECT * FROM products WHERE name=%s AND seller_id=%s",
+        "SELECT * FROM products WHERE name=%s AND seller_id=%s AND is_active = TRUE",
         (name, seller_id)
     )
 
@@ -506,7 +807,11 @@ def delete_product_by_id(product_id):
 
     try:
         cur.execute(
-            "DELETE FROM products WHERE id=%s",
+            """
+            UPDATE products
+            SET is_active = FALSE
+            WHERE id = %s
+            """,
             (product_id,)
         )
 
@@ -555,6 +860,7 @@ def search_products_by_name(shop_id, query):
         FROM products
         WHERE seller_id=%s
         AND name ILIKE %s
+        AND is_active = TRUE
     """, (shop_id, f"%{query}%"))
 
     result = cur.fetchall()
@@ -727,3 +1033,24 @@ def get_order_items(order_id):
     cur.close()
     release_connection(conn)
     return result
+
+
+def get_order(order_id):
+    conn = get_connection()
+    cur = conn.cursor(
+        cursor_factory=extras.RealDictCursor
+    )
+
+    try:
+
+        cur.execute("""
+            SELECT *
+            FROM orders
+            WHERE id = %s
+        """, (order_id,))
+
+        return cur.fetchone()
+
+    finally:
+        cur.close()
+        release_connection(conn)

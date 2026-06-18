@@ -49,6 +49,7 @@ async def order_accept(call: CallbackQuery):
     total_text += f"📍 Адрес: {result['address']}\n"
 
     buyer_id = result["buyer_tg"]
+    buyer = get_buyer(buyer_id)
 
     await call.bot.send_message(
         buyer_id,
@@ -58,7 +59,9 @@ async def order_accept(call: CallbackQuery):
     admin_text = (
         f"📝 Заказ #{order_id} принят продавцом\n\n"
         f"🏪 Продавец: {result['seller_shop']}\n"
-        f"👤 Покупатель: {result['buyer_shop']}\n\n"
+        f"🏪 Магазин: {buyer['shop_name']}\n"
+        f"📞 Телефон: {buyer['phone']}\n"
+        f"🗺 Район: {buyer['district']}\n"
         + total_text
     )
 

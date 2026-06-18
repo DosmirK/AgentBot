@@ -1,4 +1,5 @@
 from typing import List, Iterable, Optional
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from aiogram.types import (
     ReplyKeyboardMarkup,
@@ -7,6 +8,8 @@ from aiogram.types import (
     InlineKeyboardButton,
     ReplyKeyboardRemove
 )
+
+from data import DISTRICTS, WEEK_DAYS
 
 # ------------------- КОНСТАНТЫ -------------------
 BTN_BUYER = "🛒 Магазин"
@@ -18,6 +21,8 @@ BTN_DELETE_PRODUCT = "🗑 Удалить товар"
 BTN_EDIT_PRODUCT = "✏️ Изменить товар"
 BTN_DELETE_CATEGORY = "🗂 Удалить категорию"
 BTN_ORDERS = "📥 Заказы"
+BTN_SCHEDULE = "📅 График"
+BTN_PREPAYMENT = "💰 Предоплата"
 
 BTN_SHOPS = "📋 Список фирм"
 
@@ -26,7 +31,6 @@ BTN_CANCEL = "❌ Отменить"
 
 BTN_ACCEPT = "✅ Принять"
 BTN_DECLINE = "❌ Отклонить"
-
 
 # ------------------- ВСПОМОГАТЕЛЬНЫЕ -------------------
 def _safe_str(value, default: str = "—") -> str:
@@ -68,9 +72,74 @@ def seller_menu() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text=BTN_DELETE_CATEGORY),
                 KeyboardButton(text=BTN_ORDERS)
+            ],
+            [
+                KeyboardButton(text=BTN_SCHEDULE),
+                KeyboardButton(text=BTN_PREPAYMENT)
             ]
         ],
         resize_keyboard=True
+    )
+
+def prepayment_setup_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➕ Настроить",
+                    callback_data="setup_prepayment"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="close_prepayment"
+                )
+            ]
+        ]
+    )
+
+def prepayment_edit_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Редактировать",
+                    callback_data="edit_prepayment"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🗑 Отключить",
+                    callback_data="delete_prepayment"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="close_prepayment"
+                )
+            ]
+        ]
+    )
+
+def prepayment_confirm_kb():
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил",
+                    callback_data="prepayment_done"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data="prepayment_cancel"
+                )
+            ]
+        ]
     )
 
 def buyer_menu_kb() -> ReplyKeyboardMarkup:
@@ -83,11 +152,54 @@ def buyer_menu_kb() -> ReplyKeyboardMarkup:
         selective=True
     )
 
+def repeat_order_kb(order_id):
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔄 Повторить заказ",
+                    callback_data=f"repeat_order_{order_id}"
+                )
+            ]
+        ]
+    )
+
+def orders_pagination_kb(page, total_pages):
+
+    buttons = []
+
+    row = []
+
+    if page > 0:
+        row.append(
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="orders_prev"
+            )
+        )
+
+    if page < total_pages:
+        row.append(
+            InlineKeyboardButton(
+                text="➡️ Далее",
+                callback_data="orders_next"
+            )
+        )
+
+    buttons.append(row)
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=buttons
+    )
+
 def profile_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="✏️ Изменить название")],
+            [KeyboardButton(text="🗺 Изменить район")],
             [KeyboardButton(text="📍 Изменить адрес")],
+            [KeyboardButton(text="📞 Изменить телефон")],
             [KeyboardButton(text="⬅️ Назад")]
         ],
         resize_keyboard=True
@@ -96,6 +208,82 @@ def profile_kb():
 def hide_kb() -> ReplyKeyboardRemove:
     return ReplyKeyboardRemove()
 
+def week_days_kb():
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="понедельник"),
+                KeyboardButton(text="вторник")
+            ],
+            [
+                KeyboardButton(text="среда"),
+                KeyboardButton(text="четверг")
+            ],
+            [
+                KeyboardButton(text="пятница"),
+                KeyboardButton(text="суббота")
+            ],
+            [
+                KeyboardButton(text="воскресенье")
+            ],
+            [
+                KeyboardButton(text="✅ Готово")
+            ]
+        ],
+        resize_keyboard=True
+    )
+
+def delivery_day_kb():
+
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="понедельник"),
+                KeyboardButton(text="вторник")
+            ],
+            [
+                KeyboardButton(text="среда"),
+                KeyboardButton(text="четверг")
+            ],
+            [
+                KeyboardButton(text="пятница"),
+                KeyboardButton(text="суббота")
+            ],
+            [
+                KeyboardButton(text="воскресенье")
+            ]
+        ],
+        resize_keyboard=True
+    )
+
+def district_kb():
+    rows = []
+
+    for district in DISTRICTS:
+        rows.append([KeyboardButton(text=district)])
+
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True
+    )
+
+
+def seller_schedule_districts_kb():
+
+    buttons = []
+
+    for district in DISTRICTS:
+        buttons.append([
+            InlineKeyboardButton(
+                text=district,
+                callback_data=f"schedule_{district}"
+            )
+        ])
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=buttons
+    )
 
 # ------------------- INLINE КЛАВИАТУРЫ -------------------
 def shops_kb(shops) -> InlineKeyboardMarkup:

@@ -33,10 +33,20 @@ async def order_accept(call: CallbackQuery):
 
     items = get_order_items(order_id)
 
+    buyer_id = result["buyer_tg"]
+    buyer = get_buyer(buyer_id)
+
     total_text = "📦 Состав заказа:\n\n"
     total_sum = 0
 
     for item in items:
+
+        add_to_stock(
+        buyer["id"],
+        item["product_id"],
+        item["quantity"]
+    )
+
         total_sum += float(item["total_price"])
 
         total_text += (
@@ -47,9 +57,6 @@ async def order_accept(call: CallbackQuery):
 
     total_text += f"💵 Итого: {result['total_amount']} сом\n"
     total_text += f"📍 Адрес: {result['address']}\n"
-
-    buyer_id = result["buyer_tg"]
-    buyer = get_buyer(buyer_id)
 
     await call.bot.send_message(
         buyer_id,

@@ -61,3 +61,6 @@ class EditProduct(StatesGroup):
 
 class OrdersView(StatesGroup):
     page = State()
+
+class BuyerStockState(StatesGroup):
+    page = State()

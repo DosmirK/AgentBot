@@ -145,11 +145,40 @@ def prepayment_confirm_kb():
 def buyer_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_SHOPS)],
+            [KeyboardButton(text=BTN_SHOPS), KeyboardButton(text="📦 Склад")],
             [KeyboardButton(text="📥 Мои заказы"), KeyboardButton(text="👤 Профиль")]
         ],
         resize_keyboard=True,
         selective=True
+    )
+
+def stock_pagination_kb(page, total_pages):
+
+    buttons = []
+
+    row = []
+
+    if page > 0:
+        row.append(
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data="stock_prev"
+            )
+        )
+
+    if page < total_pages:
+        row.append(
+            InlineKeyboardButton(
+                text="▶️ Далее",
+                callback_data="stock_next"
+            )
+        )
+
+    if row:
+        buttons.append(row)
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=buttons
     )
 
 def repeat_order_kb(order_id):

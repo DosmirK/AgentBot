@@ -151,6 +151,18 @@ def create_tables():
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS buyer_stock (
+        id SERIAL PRIMARY KEY,
+        buyer_id INTEGER REFERENCES buyers(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+        quantity INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT NOW(),
+
+        UNIQUE(buyer_id, product_id)
+    )
+    """)
+
     conn.commit()
     cur.close()
     release_connection(conn)
@@ -671,6 +683,122 @@ def update_buyer_address(tg_id, new_address):
     cur.close()
     release_connection(conn)
 
+# ----------------- СКЛАД МАГАЗИНА ---------------------
+
+def get_buyer_stock(buyer_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT
+                bs.product_id,
+                p.name,
+                p.amount,
+                bs.quantity
+            FROM buyer_stock bs
+            JOIN products p
+            ON p.id = bs.product_id
+            WHERE bs.buyer_id = %s
+            ORDER BY p.name
+        """, (buyer_id,))
+
+        return cur.fetchall()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+def get_stock_item(buyer_id, product_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT *
+            FROM buyer_stock
+            WHERE buyer_id=%s
+            AND product_id=%s
+        """, (
+            buyer_id,
+            product_id
+        ))
+
+        return cur.fetchone()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+def add_to_stock(
+    buyer_id,
+    product_id,
+    quantity
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            INSERT INTO buyer_stock (
+                buyer_id,
+                product_id,
+                quantity
+            )
+            VALUES (%s, %s, %s)
+
+            ON CONFLICT (buyer_id, product_id)
+            DO UPDATE SET
+                quantity = buyer_stock.quantity + EXCLUDED.quantity,
+                updated_at = NOW()
+        """, (
+            buyer_id,
+            product_id,
+            quantity
+        ))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        logging.error(
+            f"❌ add_to_stock: {e}"
+        )
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+def remove_from_stock(
+    buyer_id,
+    product_id,
+    quantity
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            UPDATE buyer_stock
+            SET
+                quantity = GREATEST(
+                    quantity - %s,
+                    0
+                ),
+                updated_at = NOW()
+            WHERE buyer_id=%s
+            AND product_id=%s
+        """, (
+            quantity,
+            buyer_id,
+            product_id
+        ))
+
+        conn.commit()
+
+    finally:
+        cur.close()
+        release_connection(conn)
 
 # ----------------- КАТЕГОРИИ -----------------
 

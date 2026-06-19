@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from keyboards import *
-from states import BuyerState, OrderState, ProfileEdit, OrdersView
+from states import BuyerState, OrderState, ProfileEdit, OrdersView, BuyerStockState
 from database import *
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
@@ -204,6 +204,107 @@ async def show_shops(message: Message):
         reply_markup=shops_kb(shops)
     )
 
+@router.message(F.text == "📦 Склад")
+async def buyer_stock(message: Message, state: FSMContext):
+
+    await state.set_state(
+        BuyerStockState.page
+    )
+
+    await state.update_data(
+        page=0
+    )
+
+    await send_stock_page(message, state, message.from_user.id)
+
+async def send_stock_page(message, state, user_id):
+
+    buyer = get_buyer(user_id)
+
+    if not buyer:
+        await message.answer(
+            "❌ Сначала зарегистрируйтесь"
+        )
+        return
+
+    stock = get_buyer_stock(
+        buyer["id"]
+    )
+
+    if not stock:
+        await message.answer(
+            "📦 Склад пока пуст"
+        )
+        return
+
+    data = await state.get_data()
+
+    page = data.get("page", 0)
+
+    start = page * 1
+    end = start + 1
+
+    current_items = stock[start:end]
+
+    text = "📦 Ваш склад\n\n"
+
+    for item in current_items:
+
+        text += (
+            f"📦 {item['name']}\n"
+            f"📏 Фасовка: {item['amount']}\n"
+            f"📊 Остаток: {item['quantity']}\n\n"
+        )
+
+    total_pages = (len(stock) - 1) // 1
+
+    await message.answer(
+        text,
+        reply_markup=stock_pagination_kb(
+            page,
+            total_pages
+        )
+    )
+
+@router.callback_query(F.data == "stock_next")
+async def stock_next(
+    call: CallbackQuery,
+    state: FSMContext
+):
+
+    data = await state.get_data()
+
+    page = data.get("page", 0)
+
+    await state.update_data(
+        page=page + 1
+    )
+
+    await call.message.delete()
+
+    await send_stock_page(call.message, state, call.from_user.id)
+
+    await call.answer()
+
+@router.callback_query(F.data == "stock_prev")
+async def stock_prev(
+    call: CallbackQuery,
+    state: FSMContext
+):
+
+    data = await state.get_data()
+
+    page = data.get("page", 0)
+
+    await state.update_data(
+        page=max(page - 1, 0)
+    )
+
+    await call.message.delete()
+
+    await send_stock_page(call.message, state, call.from_user.id)
+
+    await call.answer()
 
 @router.message(F.text == "📥 Мои заказы")
 async def buyer_orders(message: Message, state: FSMContext):

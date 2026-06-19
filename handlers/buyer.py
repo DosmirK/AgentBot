@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from keyboards import *
-from states import BuyerState, OrderState, ProfileEdit, OrdersView, BuyerStockState
+from states import BuyerState, OrderState, ProfileEdit, OrdersView, BuyerStockState, StockState
 from database import *
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
@@ -217,54 +217,107 @@ async def buyer_stock(message: Message, state: FSMContext):
 
     await send_stock_page(message, state, message.from_user.id)
 
-async def send_stock_page(message, state, user_id):
+async def send_stock_page(message: Message, state: FSMContext, user_id):
 
     buyer = get_buyer(user_id)
-
     if not buyer:
-        await message.answer(
-            "❌ Сначала зарегистрируйтесь"
-        )
+        await message.answer("❌ Сначала зарегистрируйтесь")
         return
 
-    stock = get_buyer_stock(
-        buyer["id"]
+    stock = get_buyer_stock(buyer["id"])
+    if not stock:
+        await message.answer("📦 Склад пока пуст")
+        return
+
+    data = await state.get_data()
+    page = data.get("page", 0)
+
+    per_page = 10
+    start = page * per_page
+    end = start + per_page
+
+    current_items = stock[start:end]
+
+    for item in current_items:
+
+        limit = get_stock_limit(buyer["id"], item["product_id"])
+        target = limit["target_quantity"] if limit else 0
+
+        text = (
+            f"📦 {item['name']}\n"
+            f"📏 Фасовка: {item['amount']}\n"
+            f"Остаток: {item['quantity']}\n"
+            f"Норма: {target}"
+        )
+
+        await message.answer(
+            text,
+            reply_markup=stock_item_kb(item["product_id"])
+        )
+
+    total_pages = (len(stock) - 1) // per_page
+
+    if total_pages > 0:
+        await message.answer(
+            f"Страница {page + 1} из {total_pages + 1}",
+            reply_markup=stock_pagination_kb(page, total_pages)
+        )
+
+@router.callback_query(F.data.startswith("edit_limit_"))
+async def edit_limit(
+        call: CallbackQuery,
+        state: FSMContext
+):
+    product_id = int(
+        call.data.split("_")[2]
     )
 
-    if not stock:
+    await state.update_data(
+        limit_product_id=product_id
+    )
+
+    await state.set_state(
+        StockState.edit_limit
+    )
+
+    await call.message.answer(
+        "Введите новую норму:"
+    )
+
+    await call.answer()
+
+@router.message(StockState.edit_limit)
+async def save_limit(
+        message: Message,
+        state: FSMContext
+):
+
+    if not message.text.isdigit():
+
         await message.answer(
-            "📦 Склад пока пуст"
+            "Введите число"
         )
         return
 
     data = await state.get_data()
 
-    page = data.get("page", 0)
+    product_id = data["limit_product_id"]
 
-    start = page * 1
-    end = start + 1
+    buyer = get_buyer(
+        message.from_user.id
+    )
 
-    current_items = stock[start:end]
-
-    text = "📦 Ваш склад\n\n"
-
-    for item in current_items:
-
-        text += (
-            f"📦 {item['name']}\n"
-            f"📏 Фасовка: {item['amount']}\n"
-            f"📊 Остаток: {item['quantity']}\n\n"
-        )
-
-    total_pages = (len(stock) - 1) // 1
+    set_stock_limit(
+        buyer["id"],
+        product_id,
+        int(message.text)
+    )
 
     await message.answer(
-        text,
-        reply_markup=stock_pagination_kb(
-            page,
-            total_pages
-        )
+        "✅ Норма сохранена"
     )
+
+    await state.clear()
 
 @router.callback_query(F.data == "stock_next")
 async def stock_next(

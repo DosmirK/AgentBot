@@ -64,3 +64,6 @@ class OrdersView(StatesGroup):
 
 class BuyerStockState(StatesGroup):
     page = State()
+
+class StockState(StatesGroup):
+    edit_limit = State()

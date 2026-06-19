@@ -163,6 +163,16 @@ def create_tables():
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS buyer_stock_limits (
+        id SERIAL PRIMARY KEY,
+        buyer_id INTEGER REFERENCES buyers(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+        target_quantity INTEGER DEFAULT 0,
+        UNIQUE (buyer_id, product_id)
+    )
+    """)
+
     conn.commit()
     cur.close()
     release_connection(conn)
@@ -795,6 +805,69 @@ def remove_from_stock(
         ))
 
         conn.commit()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+#------------------ НОРМЫ ОСТАТКОВ ------------
+
+def set_stock_limit(
+        buyer_id,
+        product_id,
+        quantity
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+
+        cur.execute("""
+            INSERT INTO buyer_stock_limits
+            (
+                buyer_id,
+                product_id,
+                target_quantity
+            )
+            VALUES (%s, %s, %s)
+
+            ON CONFLICT (buyer_id, product_id)
+            DO UPDATE SET
+                target_quantity = EXCLUDED.target_quantity
+        """, (
+            buyer_id,
+            product_id,
+            quantity
+        ))
+
+        conn.commit()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+def get_stock_limit(
+        buyer_id,
+        product_id
+):
+    conn = get_connection()
+    cur = conn.cursor(
+        cursor_factory=extras.RealDictCursor
+    )
+
+    try:
+
+        cur.execute("""
+            SELECT *
+            FROM buyer_stock_limits
+            WHERE buyer_id=%s
+            AND product_id=%s
+        """, (
+            buyer_id,
+            product_id
+        ))
+
+        return cur.fetchone()
 
     finally:
         cur.close()

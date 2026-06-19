@@ -194,6 +194,21 @@ def repeat_order_kb(order_id):
         ]
     )
 
+def stock_item_kb(product_id):
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⚙ Изменить норму",
+                    callback_data=f"edit_limit_{product_id}"
+                )
+            ]
+        ]
+    )
+
+    return kb
+
 def orders_pagination_kb(page, total_pages):
 
     buttons = []

@@ -146,7 +146,8 @@ def buyer_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_SHOPS), KeyboardButton(text="📦 Склад")],
-            [KeyboardButton(text="📥 Мои заказы"), KeyboardButton(text="👤 Профиль")]
+            [KeyboardButton(text="📥 Мои заказы"), KeyboardButton(text="👤 Профиль")],
+            [KeyboardButton(text="🛒 Готовая заявка")]
         ],
         resize_keyboard=True,
         selective=True
@@ -549,3 +550,18 @@ def cart_menu_kb() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True
     )
+
+def ready_order_kb(seller_id):
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🛒 Заказать",
+                    callback_data=f"ready_order_{seller_id}"
+                )
+            ]
+        ]
+    )
+
+    return kb

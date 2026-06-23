@@ -14,6 +14,7 @@ from handlers.seller import router as seller_router
 from handlers.buyer import router as buyer_router
 from handlers.orders import router as orders_router
 from handlers.other import router as other_router
+from scheduler import setup_scheduler
 
 
 logging.basicConfig(
@@ -36,6 +37,8 @@ async def main():
     dp.include_router(other_router)
 
     create_tables()
+
+    setup_scheduler(bot)
 
     logging.info("🤖 Bot started")
 

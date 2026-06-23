@@ -5,6 +5,7 @@ from aiogram.types import Message
 from aiogram.filters import Command
 
 from config import ADMIN_ID
+from scheduler import send_order_reminders
 
 from database import (
     get_seller,
@@ -193,3 +194,7 @@ async def admin_buyers(message: Message):
         )
 
     await message.answer(text)
+
+@router.message(Command("/test_reminder"))
+async def test_reminder(message: Message):
+    await send_order_reminders(message.bot)

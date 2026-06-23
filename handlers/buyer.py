@@ -241,7 +241,7 @@ async def send_stock_page(message: Message, state: FSMContext, user_id):
     for item in current_items:
 
         limit = get_stock_limit(buyer["id"], item["product_id"])
-        target = limit["target_quantity"] if limit else 0
+        target = limit["target_quantity"] if limit else 5
 
         text = (
             f"📦 {item['name']}\n"
@@ -356,6 +356,184 @@ async def stock_prev(
     await call.message.delete()
 
     await send_stock_page(call.message, state, call.from_user.id)
+
+    await call.answer()
+
+@router.message(F.text == "🛒 Готовая заявка")
+async def ready_order(message: Message):
+
+    buyer = get_buyer(message.from_user.id)
+
+    if not buyer:
+        await message.answer(
+            "❌ Сначала зарегистрируйтесь"
+        )
+        return
+
+    ready_items = get_ready_order(
+        buyer["id"]
+    )
+
+    if not ready_items:
+
+        await message.answer(
+            "✅ Все остатки в норме"
+        )
+
+        return
+
+    grouped = group_ready_orders(
+        ready_items
+    )
+
+    for seller_id, data in grouped.items():
+
+        seller = get_seller_by_id(
+            seller_id
+        )
+
+        seller_name = (
+            seller["shop_name"]
+            if seller
+            else "Неизвестно"
+        )
+
+        text = (
+            f"🏪 {seller_name}\n\n"
+        )
+
+        for item in data["items"]:
+
+            text += (
+                f"📦 {item['product_name']}\n"
+                f"{item['quantity']} шт × "
+                f"{item['price']} = "
+                f"{item['sum']} сом\n\n"
+            )
+
+        text += (
+            f"💵 Итого: "
+            f"{data['total_sum']} сом"
+        )
+
+        await message.answer(
+            text,
+            reply_markup=ready_order_kb(
+                seller_id
+            )
+        )
+
+@router.callback_query(
+    F.data.startswith("ready_order_")
+)
+async def ready_order_confirm(
+        call: CallbackQuery,
+        state: FSMContext
+):
+
+    seller_id = int(
+        call.data.split("_")[2]
+    )
+
+    buyer = get_buyer(
+        call.from_user.id
+    )
+
+    if not buyer:
+
+        await call.answer(
+            "❌ Магазин не найден"
+        )
+        return
+
+    ready_items = get_ready_order(
+        buyer["id"]
+    )
+
+    if not ready_items:
+
+        await call.answer(
+            "Нет товаров для заказа"
+        )
+        return
+
+    cart = []
+
+    total_sum = 0
+
+    for item in ready_items:
+
+        if item["seller_id"] != seller_id:
+            continue
+
+        product = get_product(
+            item["product_id"]
+        )
+
+        if not product:
+            continue
+
+        quantity = item["quantity"]
+
+        cart.append(
+            {
+                "product_id": product["id"],
+                "amount": quantity
+            }
+        )
+
+        total_sum += (
+            quantity *
+            float(product["price"])
+        )
+
+    if not cart:
+
+        await call.answer(
+            "Нет товаров"
+        )
+        return
+
+    await state.update_data(
+        cart=cart,
+        seller_id=seller_id,
+        address=buyer["address"]
+    )
+
+    text = "📦 Проверьте заказ:\n\n"
+
+    for item in cart:
+
+        product = get_product(
+            item["product_id"]
+        )
+
+        summa = (
+            item["amount"]
+            * float(product["price"])
+        )
+
+        text += (
+            f"📦 {product['name']}\n"
+            f"📦 Фасовка: {product['amount']}\n"
+            f"🔢 {item['amount']} × "
+            f"{product['price']} = "
+            f"{summa} сом\n\n"
+        )
+
+    text += (
+        f"📍 Адрес: {buyer['address']}\n\n"
+        f"💵 Итого: {total_sum} сом"
+    )
+
+    await state.set_state(
+        OrderState.confirm
+    )
+
+    await call.message.answer(
+        text,
+        reply_markup=order_confirm_buyer_kb()
+    )
 
     await call.answer()
 

@@ -1,6 +1,7 @@
 import logging
 import os
 from psycopg2 import pool, extras
+from datetime import datetime
 
 from dotenv import load_dotenv
 
@@ -298,10 +299,18 @@ def get_all_buyers():
 
     try:
         cur.execute("""
-            SELECT tg_id, shop_name, address
+            SELECT
+                id,
+                tg_id,
+                shop_name,
+                address,
+                district,
+                phone
             FROM buyers
         """)
+
         return cur.fetchall()
+
     finally:
         cur.close()
         release_connection(conn)
@@ -692,6 +701,139 @@ def update_buyer_address(tg_id, new_address):
     conn.commit()
     cur.close()
     release_connection(conn)
+
+#------------------ ГОТОВАЯ ЗАЯВКА ---------------------
+
+def get_ready_order(buyer_id):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    try:
+
+        cur.execute("""
+            SELECT
+                bs.product_id,
+                p.name AS product_name,
+                bs.quantity AS stock_quantity,
+
+                sl.target_quantity,
+
+                p.seller_id,
+                p.price
+
+            FROM buyer_stock bs
+
+            JOIN buyer_stock_limits sl
+                ON bs.buyer_id = sl.buyer_id
+                AND bs.product_id = sl.product_id
+
+            JOIN products p
+                ON p.id = bs.product_id
+
+            WHERE bs.buyer_id=%s
+            AND p.is_active=TRUE
+        """, (buyer_id,))
+
+        rows = cur.fetchall()
+
+        result = []
+
+        for row in rows:
+
+            need_quantity = (
+                row["target_quantity"]
+                - row["stock_quantity"]
+            )
+
+            if need_quantity <= 0:
+                continue
+
+            result.append(
+                {
+                    "seller_id": row["seller_id"],
+                    "product_id": row["product_id"],
+                    "product_name": row["product_name"],
+                    "quantity": need_quantity,
+                    "price": float(row["price"]),
+                    "sum": need_quantity * float(row["price"])
+                }
+            )
+
+        return result
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+def group_ready_orders(ready_order):
+
+    grouped = {}
+
+    for item in ready_order:
+
+        seller_id = item["seller_id"]
+
+        if seller_id not in grouped:
+
+            grouped[seller_id] = {
+                "items": [],
+                "total_sum": 0
+            }
+
+        grouped[seller_id]["items"].append(item)
+
+        grouped[seller_id]["total_sum"] += item["sum"]
+
+    return grouped
+
+# ----------------- НАПОМИНАНИЯ ------------------------
+
+def get_buyer_sellers(buyer_tg):
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+    try:
+        cur.execute("""
+            SELECT DISTINCT
+                s.id,
+                s.shop_name
+            FROM orders o
+            JOIN sellers s
+                ON s.id = o.seller_id
+            WHERE o.buyer_tg = %s
+        """, (buyer_tg,))
+
+        return cur.fetchall()
+
+    finally:
+        cur.close()
+        release_connection(conn)
+
+def can_order_today(seller_id, district):
+
+    schedule = get_seller_schedule(seller_id, district)
+
+    if not schedule:
+        return False
+
+    days_map = {
+        "Monday": "Понедельник",
+        "Tuesday": "Вторник",
+        "Wednesday": "Среда",
+        "Thursday": "Четверг",
+        "Friday": "Пятница",
+        "Saturday": "Суббота",
+        "Sunday": "Воскресенье"
+    }
+
+    today_ru = days_map[datetime.now().strftime("%A")]
+
+    order_days = [
+        d.strip().lower()
+        for d in schedule["order_days"].split(",")
+    ]
+
+    return today_ru.lower() in order_days
 
 # ----------------- СКЛАД МАГАЗИНА ---------------------
 

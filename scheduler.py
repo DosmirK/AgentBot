@@ -61,8 +61,8 @@ def setup_scheduler(bot):
     scheduler.add_job(
         send_order_reminders,
         "cron",
-        hour=22,
-        minute=27,
+        hour=13,
+        minute=00,
         args=[bot]
     )
 
